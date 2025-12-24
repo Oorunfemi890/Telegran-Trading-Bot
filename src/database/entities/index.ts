@@ -1,1 +1,13 @@
-// Placeholder file: index.ts in src/database/entities
+export { User } from './User.entity';
+export { UserSettings } from './UserSettings.entity';
+export { TradingAccount } from './TradingAccount.entity';
+export { TelegramChannel } from './TelegramChannel.entity';
+export { UserChannelSubscription } from './UserChannelSubscription.entity';
+export { Signal } from './Signal.entity';
+export { Trade } from './Trade.entity';
+export { Position } from './Position.entity';
+export { RiskEvent } from './RiskEvent.entity';
+export { EmailLog } from './EmailLog.entity';
+export { DailyReport } from './DailyReport.entity';
+export { InvitationCode } from './InvitationCode.entity';
+export { AuditLog } from './AuditLog.entity';
