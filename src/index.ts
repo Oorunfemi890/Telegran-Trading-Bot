@@ -5,6 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import { initializeDatabase, closeDatabase } from "./config/database.config";
+import { initializeRedis, closeRedis } from "./config/redis.config";
 
 // Load environment variables
 config();
@@ -132,6 +133,10 @@ async function startServer() {
     await initializeDatabase();
     console.log("✅ Database connected successfully\n");
 
+    // Initialize Redis (non-blocking)
+    console.log("🔴 Connecting to Redis...");
+    await initializeRedis();
+
     // Start server
     app.listen(PORT, () => {
       console.log("==========================================");
@@ -154,8 +159,9 @@ async function startServer() {
       console.log(`\n⚠️  Received ${signal}, shutting down gracefully...`);
 
       try {
+        await closeRedis();
         await closeDatabase();
-        console.log("✅ Database connection closed");
+        console.log("✅ All connections closed");
         process.exit(0);
       } catch (error) {
         console.error("❌ Error during shutdown:", error);
