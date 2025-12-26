@@ -3,7 +3,7 @@
 // =============================================
 import { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken } from '../helpers/jwt.helper';
-import { JWTPayload, UserRole } from '../types';
+import { JWTPayload } from '../types';
 import AppDataSource from '../database/data-source';
 import { User } from '../database/entities/User.entity';
 
@@ -78,7 +78,7 @@ export const authenticate = async (
 // Optional authentication (doesn't fail if no token)
 export const optionalAuthenticate = async (
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {

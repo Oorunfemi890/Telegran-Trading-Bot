@@ -48,8 +48,12 @@ async function testEmail() {
     console.log(`🆔 User ID: ${testUser.id}\n`);
 
     await emailService.sendWelcomeEmail(
-      testUser.email,
-      testUser.fullName,
+      {
+        fullName: testUser.fullName,
+        email: testUser.email,
+        tier: testUser.tier,
+        dashboardUrl: `${process.env.APP_URL || 'http://localhost:3000'}/dashboard`,
+      },
       testUser.id
     );
 

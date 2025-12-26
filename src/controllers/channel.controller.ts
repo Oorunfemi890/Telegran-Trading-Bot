@@ -10,7 +10,7 @@ export class ChannelController {
    * Get all available channels
    * GET /api/v1/channels
    */
-  async getAllChannels(req: Request, res: Response): Promise<void> {
+  async getAllChannels(_req: Request, res: Response): Promise<void> {
     try {
       const channels = await channelService.getAllChannels();
 

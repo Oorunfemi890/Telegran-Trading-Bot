@@ -36,7 +36,7 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(compression());
 
 // Request logging
-app.use((req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
@@ -45,7 +45,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // HEALTH CHECK ROUTES
 // =============================================
 
-app.get("/health", (req: Request, res: Response) => {
+app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: "Trading Bot API is running",
@@ -55,7 +55,7 @@ app.get("/health", (req: Request, res: Response) => {
   });
 });
 
-app.get("/api/health", (req: Request, res: Response) => {
+app.get("/api/health", (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     service: "Telegram Trading Bot",
@@ -74,19 +74,19 @@ app.get("/api/health", (req: Request, res: Response) => {
 // API ROUTES
 // =============================================
 import authRoutes from "./routes/auth.routes";
-import channelRoutes from './routes/channel.routes';
+import channelRoutes from "./routes/channel.routes";
 
 // Mount routes after auth routes (around line 78)
-app.use('/api/v1/channels', channelRoutes);
+app.use("/api/v1/channels", channelRoutes);
 
 // API v1 base route
-app.get("/api/v1", (req: Request, res: Response) => {
+app.get("/api/v1", (_req: Request, res: Response) => {
   res.json({
     success: true,
     message: "Trading Bot API v1",
     endpoints: {
       auth: "/api/v1/auth",
-      channels: "/api/v1/channels",  
+      channels: "/api/v1/channels",
       users: "/api/v1/users",
       trades: "/api/v1/trades",
       signals: "/api/v1/signals",
@@ -112,7 +112,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Global error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Error:", err);
 
   res.status(500).json({
