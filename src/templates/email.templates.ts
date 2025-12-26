@@ -1,4 +1,3 @@
-// Placeholder file: index.ts in src/templates
 // FILE: src/templates/email.templates.ts
 // =============================================
 // Re-export all email templates from individual files

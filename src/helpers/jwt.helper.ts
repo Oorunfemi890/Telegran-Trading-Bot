@@ -11,13 +11,13 @@ const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '90d';
 export const generateAccessToken = (payload: Omit<JWTPayload, 'iat' | 'exp'>): string => {
   return jwt.sign(payload, JWT_SECRET, {
     expiresIn: JWT_EXPIRES_IN,
-  });
+  } as jwt.SignOptions);
 };
 
 export const generateRefreshToken = (payload: Omit<JWTPayload, 'iat' | 'exp'>): string => {
   return jwt.sign(payload, JWT_REFRESH_SECRET, {
     expiresIn: JWT_REFRESH_EXPIRES_IN,
-  });
+  } as jwt.SignOptions);
 };
 
 export const verifyAccessToken = (token: string): JWTPayload => {
