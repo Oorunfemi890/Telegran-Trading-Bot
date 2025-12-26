@@ -1,8 +1,7 @@
-// =============================================
 // FILE: src/controllers/auth.controller.ts
 // =============================================
-import { Request, Response } from 'express';
-import { AuthService } from '../services/auth.service';
+import { Request, Response } from "express";
+import { AuthService } from "../services/auth.service";
 
 const authService = new AuthService();
 
@@ -19,7 +18,7 @@ export class AuthController {
       if (!email || !fullName || !password || !invitationCode) {
         res.status(400).json({
           success: false,
-          message: 'All fields are required',
+          message: "All fields are required",
         });
         return;
       }
@@ -33,13 +32,13 @@ export class AuthController {
 
       res.status(201).json({
         success: true,
-        message: 'Registration successful',
+        message: "Registration successful",
         data: result,
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Registration failed',
+        message: error.message || "Registration failed",
       });
     }
   }
@@ -55,7 +54,7 @@ export class AuthController {
       if (!email || !password) {
         res.status(400).json({
           success: false,
-          message: 'Email and password are required',
+          message: "Email and password are required",
         });
         return;
       }
@@ -64,35 +63,13 @@ export class AuthController {
 
       res.status(200).json({
         success: true,
-        message: 'Login successful',
+        message: "Login successful",
         data: result,
       });
     } catch (error: any) {
       res.status(401).json({
         success: false,
-        message: error.message || 'Login failed',
-      });
-    }
-  }
-
-  /**
-   * Verify email
-   * GET /api/v1/auth/verify-email/:token
-   */
-  async verifyEmail(req: Request, res: Response): Promise<void> {
-    try {
-      const { token } = req.params;
-
-      await authService.verifyEmail(token);
-
-      res.status(200).json({
-        success: true,
-        message: 'Email verified successfully',
-      });
-    } catch (error: any) {
-      res.status(400).json({
-        success: false,
-        message: error.message || 'Email verification failed',
+        message: error.message || "Login failed",
       });
     }
   }
@@ -108,7 +85,7 @@ export class AuthController {
       if (!email) {
         res.status(400).json({
           success: false,
-          message: 'Email is required',
+          message: "Email is required",
         });
         return;
       }
@@ -117,13 +94,13 @@ export class AuthController {
 
       res.status(200).json({
         success: true,
-        message: 'If your email is registered, you will receive a reset link',
-        ...(process.env.NODE_ENV === 'development' && { token }),
+        message: "If your email is registered, you will receive a reset link",
+        ...(process.env.NODE_ENV === "development" && { token }),
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Password reset request failed',
+        message: error.message || "Password reset request failed",
       });
     }
   }
@@ -139,7 +116,7 @@ export class AuthController {
       if (!token || !newPassword) {
         res.status(400).json({
           success: false,
-          message: 'Token and new password are required',
+          message: "Token and new password are required",
         });
         return;
       }
@@ -148,12 +125,12 @@ export class AuthController {
 
       res.status(200).json({
         success: true,
-        message: 'Password reset successful',
+        message: "Password reset successful",
       });
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Password reset failed',
+        message: error.message || "Password reset failed",
       });
     }
   }
@@ -167,7 +144,7 @@ export class AuthController {
       if (!req.userId) {
         res.status(401).json({
           success: false,
-          message: 'Unauthorized',
+          message: "Unauthorized",
         });
         return;
       }
@@ -181,7 +158,7 @@ export class AuthController {
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Failed to get profile',
+        message: error.message || "Failed to get profile",
       });
     }
   }
@@ -197,7 +174,7 @@ export class AuthController {
       if (!code) {
         res.status(400).json({
           success: false,
-          message: 'Invitation code is required',
+          message: "Invitation code is required",
         });
         return;
       }
@@ -211,7 +188,7 @@ export class AuthController {
     } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: error.message || 'Validation failed',
+        message: error.message || "Validation failed",
       });
     }
   }

@@ -27,13 +27,6 @@ const question = (query: string): Promise<string> => {
   return new Promise((resolve) => rl.question(query, resolve));
 };
 
-const TIER_PRICES: Record<SubscriptionTier, number> = {
-  [SubscriptionTier.FREE]: 0,
-  [SubscriptionTier.STARTER]: 29,
-  [SubscriptionTier.PRO]: 99,
-  [SubscriptionTier.ENTERPRISE]: 299,
-};
-
 async function generateInvitation() {
   try {
     console.log("\n🎟️  INVITATION CODE GENERATOR\n");
@@ -164,44 +157,19 @@ async function generateInvitation() {
       console.log("💡 You can manually send the code to the customer\n");
     }
 
-    // Display email preview
+    // Display registration URL
+    const appUrl = process.env.APP_URL || "http://localhost:3000";
+    const registrationUrl = `${appUrl}/register?code=${code}`;
+
     console.log("==========================================");
-    console.log("📧 EMAIL PREVIEW");
+    console.log("📧 CUSTOMER INSTRUCTIONS");
     console.log("==========================================");
-    console.log(`To: ${customerEmail}`);
-    console.log(
-      `Subject: Your Trading Bot Invitation Code - ${tier.toUpperCase()} Plan`
-    );
-    console.log("-------------------------------------------");
-    console.log(`
-Hi ${customerName},
-
-Thank you for purchasing the ${tier.toUpperCase()} plan!
-
-Your Invitation Code: ${code}
-
-Plan Details:
-- Tier: ${tier.toUpperCase()}
-- Price: $${price}
-- Expires: ${expiresAt ? expiresAt.toLocaleDateString() : "Never"}
-
-Get Started:
-1. Visit ${process.env.APP_URL || "http://localhost:3000"}/register
-2. Enter your invitation code: ${code}
-3. Create your account and start trading!
-
-The customer will receive a detailed email with:
-- Registration link with pre-filled code
-- What happens after registration
-- How to connect Telegram and MetaTrader
-- Complete setup instructions
-
-Questions? Reply to this email.
-
-Best regards,
-The Trading Bot Team
-    `);
-    console.log("-------------------------------------------\n");
+    console.log(`\nSend this link to ${customerName}:\n`);
+    console.log(`🔗 ${registrationUrl}\n`);
+    console.log("Or they can:");
+    console.log(`1. Visit: ${appUrl}/register`);
+    console.log(`2. Enter code: ${code}`);
+    console.log(`3. Complete registration\n`);
 
     // Option to generate another
     const generateAnother = await question("Generate another code? (y/n): ");
