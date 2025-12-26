@@ -7,16 +7,23 @@ import {
   validateTelegramConfig,
 } from "../config/telegram.config";
 import { NewMessage, NewMessageEvent } from "telegram/events";
+import * as readline from 'readline';
 
-// @ts-ignore - input module doesn't have types
-const input = require("input");
+// Create readline interface for input
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+const question = (query: string): Promise<string> => {
+  return new Promise((resolve) => rl.question(query, resolve));
+};
 
 export class TelegramClientService {
   private client: TelegramClient | null = null;
   private session: StringSession;
   private isConnected = false;
-  private messageHandlers: Array<(event: NewMessageEvent) => Promise<void>> =
-    [];
+  private messageHandlers: Array<(event: NewMessageEvent) => Promise<void>> = [];
 
   constructor() {
     this.session = new StringSession(telegramConfig.sessionString);
@@ -45,19 +52,16 @@ export class TelegramClientService {
 
       // Start the client
       await this.client.start({
-        phoneNumber: async () => await input.text("Enter your phone number: "),
-        password: async () => await input.text("Enter your password: "),
-        phoneCode: async () =>
-          await input.text("Enter the code you received: "),
+        phoneNumber: async () => await question("Enter your phone number: "),
+        password: async () => await question("Enter your password: "),
+        phoneCode: async () => await question("Enter the code you received: "),
         onError: (err: Error) => console.error("❌ Telegram auth error:", err),
       });
 
       // Save session string for future use
       const sessionString = this.client.session.save() as unknown as string;
       if (sessionString && sessionString !== telegramConfig.sessionString) {
-        console.log(
-          "\n⚠️  IMPORTANT: Save this session string to your .env file:"
-        );
+        console.log("\n⚠️  IMPORTANT: Save this session string to your .env file:");
         console.log("TELEGRAM_SESSION_STRING=" + sessionString);
         console.log("\n");
       }
@@ -68,10 +72,14 @@ export class TelegramClientService {
       // Set up message handler
       this.setupMessageHandler();
 
+      // Close readline interface
+      rl.close();
+
       return true;
     } catch (error) {
       console.error("❌ Failed to initialize Telegram client:", error);
       this.isConnected = false;
+      rl.close();
       return false;
     }
   }
@@ -120,10 +128,7 @@ export class TelegramClientService {
       console.log(`✅ Joined channel: ${channelIdentifier}`);
       return true;
     } catch (error: any) {
-      console.error(
-        `❌ Failed to join channel ${channelIdentifier}:`,
-        error.message
-      );
+      console.error(`❌ Failed to join channel ${channelIdentifier}:`, error.message);
       return false;
     }
   }

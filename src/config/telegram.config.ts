@@ -17,15 +17,31 @@ export const telegramConfig: TelegramConfig = {
 };
 
 export const validateTelegramConfig = (): boolean => {
-  if (!telegramConfig.enabled) {
-    console.log('⚠️  Telegram integration disabled - missing credentials');
+  // Check if Telegram is explicitly disabled
+  if (process.env.TELEGRAM_ENABLED === 'false') {
+    console.log('⚠️  Telegram integration disabled via TELEGRAM_ENABLED flag');
     return false;
   }
 
-  if (!telegramConfig.apiId || !telegramConfig.apiHash) {
-    console.error('❌ Telegram API credentials missing');
+  if (!telegramConfig.apiId || telegramConfig.apiId === 0) {
+    console.log('⚠️  Telegram integration disabled - TELEGRAM_API_ID missing or invalid');
     return false;
   }
 
+  if (!telegramConfig.apiHash) {
+    console.log('⚠️  Telegram integration disabled - TELEGRAM_API_HASH missing');
+    return false;
+  }
+
+  // Validate API ID is a number
+  if (isNaN(telegramConfig.apiId)) {
+    console.log('⚠️  Telegram integration disabled - TELEGRAM_API_ID must be a number');
+    return false;
+  }
+
+  console.log('✅ Telegram configuration valid');
+  console.log(`   API ID: ${telegramConfig.apiId}`);
+  console.log(`   API Hash: ${telegramConfig.apiHash.substring(0, 8)}...`);
+  
   return true;
 };
