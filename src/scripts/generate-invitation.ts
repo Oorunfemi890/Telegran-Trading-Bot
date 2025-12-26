@@ -1,5 +1,8 @@
 #!/usr/bin/env ts-node
 
+// FILE: src/scripts/generate-invitation.ts
+// =============================================
+
 import "reflect-metadata";
 import { config } from "dotenv";
 import * as readline from "readline";
@@ -10,8 +13,9 @@ import {
   generateInvitationCode,
   calculateExpiryDate,
 } from "../helpers/invitation.helper";
+import { EmailService } from "../services/email.service";
+import { initializeRedis } from "../config/redis.config";
 
-// Load environment variables
 config();
 
 const rl = readline.createInterface({
@@ -23,28 +27,33 @@ const question = (query: string): Promise<string> => {
   return new Promise((resolve) => rl.question(query, resolve));
 };
 
-// const TIER_PRICES = {
-//   [SubscriptionTier.FREE]: 0,
-//   [SubscriptionTier.STARTER]: 29,
-//   [SubscriptionTier.PRO]: 99,
-//   [SubscriptionTier.ENTERPRISE]: 299,
-// };
+const TIER_PRICES: Record<SubscriptionTier, number> = {
+  [SubscriptionTier.FREE]: 0,
+  [SubscriptionTier.STARTER]: 29,
+  [SubscriptionTier.PRO]: 99,
+  [SubscriptionTier.ENTERPRISE]: 299,
+};
 
 async function generateInvitation() {
   try {
     console.log("\n🎟️  INVITATION CODE GENERATOR\n");
     console.log("==========================================\n");
 
-    // Initialize database
+    // Initialize database and Redis
     await AppDataSource.initialize();
-    console.log("✅ Database connected\n");
+    console.log("✅ Database connected");
+
+    await initializeRedis();
+    console.log("✅ Redis initialized\n");
+
+    const emailService = new EmailService();
 
     // Get tier
     console.log("Available Tiers:");
-    console.log("1. Free");
-    console.log("2. Starter ($29)");
-    console.log("3. Pro ($99)");
-    console.log("4. Enterprise ($299)\n");
+    console.log("1. Free ($0) - Basic features");
+    console.log("2. Starter ($29) - 3 channels, 5 positions");
+    console.log("3. Pro ($99) - Unlimited channels, 10 positions");
+    console.log("4. Enterprise ($299) - Everything + priority support\n");
 
     const tierChoice = await question("Select tier (1-4): ");
     let tier: SubscriptionTier;
@@ -73,10 +82,16 @@ async function generateInvitation() {
         price = 29;
     }
 
-    // Get customer email (optional)
-    const customerEmail = await question(
-      "Customer email (leave empty for anyone): "
-    );
+    // Get customer details
+    const customerEmail = await question("Customer email: ");
+    const customerName = await question("Customer name: ");
+
+    if (!customerEmail || !customerEmail.includes("@")) {
+      console.log("❌ Invalid email address");
+      rl.close();
+      await AppDataSource.destroy();
+      process.exit(1);
+    }
 
     // Get max uses
     const maxUsesInput = await question("Max uses (default: 1): ");
@@ -105,14 +120,13 @@ async function generateInvitation() {
       currentUses: 0,
       expiresAt,
       status: InvitationCodeStatus.ACTIVE,
-      customerEmail: customerEmail.trim() || null,
+      customerEmail: customerEmail.trim(),
       notes: notes.trim() || null,
-      generated_by_id: null, // Will be set when admin generates from dashboard
+      generated_by_id: null,
     });
 
     await invitationRepo.save(invitation);
 
-    // Display results
     console.log("\n==========================================");
     console.log("✅ INVITATION CODE GENERATED SUCCESSFULLY");
     console.log("==========================================\n");
@@ -120,7 +134,7 @@ async function generateInvitation() {
     console.log(`🎯 Tier: ${tier}`);
     console.log(`💰 Price: $${price}`);
     console.log(`👥 Max Uses: ${maxUses}`);
-    console.log(`📧 Customer Email: ${customerEmail || "Anyone"}`);
+    console.log(`📧 Customer: ${customerName} <${customerEmail}>`);
     console.log(
       `⏰ Expires: ${expiresAt ? expiresAt.toLocaleDateString() : "Never"}`
     );
@@ -129,31 +143,60 @@ async function generateInvitation() {
     }
     console.log("\n==========================================\n");
 
-    // Generate email template preview
-    console.log("📧 EMAIL TO SEND TO CUSTOMER:\n");
-    console.log("-------------------------------------------");
+    // Send email to customer
+    console.log("📧 Sending invitation email to customer...\n");
+
+    try {
+      await emailService.sendInvitationCodeEmail({
+        customerName,
+        customerEmail,
+        invitationCode: code,
+        tier,
+        price,
+        expiresAt,
+        maxUses,
+      });
+
+      console.log("✅ Invitation email sent successfully!");
+      console.log(`📬 Email sent to: ${customerEmail}\n`);
+    } catch (emailError) {
+      console.log("⚠️  Email send failed (but code was created):", emailError);
+      console.log("💡 You can manually send the code to the customer\n");
+    }
+
+    // Display email preview
+    console.log("==========================================");
+    console.log("📧 EMAIL PREVIEW");
+    console.log("==========================================");
+    console.log(`To: ${customerEmail}`);
     console.log(
-      `Subject: Your Invitation to ${process.env.APP_NAME || "Trading Bot"}`
+      `Subject: Your Trading Bot Invitation Code - ${tier.toUpperCase()} Plan`
     );
     console.log("-------------------------------------------");
     console.log(`
-Hi there!
+Hi ${customerName},
 
-You've been invited to join our exclusive trading bot platform!
+Thank you for purchasing the ${tier.toUpperCase()} plan!
 
 Your Invitation Code: ${code}
 
-Tier: ${tier.toUpperCase()}
-Price: $${price}
+Plan Details:
+- Tier: ${tier.toUpperCase()}
+- Price: $${price}
+- Expires: ${expiresAt ? expiresAt.toLocaleDateString() : "Never"}
 
-To activate your account:
-1. Visit: ${process.env.APP_URL || "http://localhost:3000"}/signup
+Get Started:
+1. Visit ${process.env.APP_URL || "http://localhost:3000"}/register
 2. Enter your invitation code: ${code}
-3. Complete the registration form
+3. Create your account and start trading!
 
-This code ${expiresAt ? `expires on ${expiresAt.toLocaleDateString()}` : "never expires"} and can be used ${maxUses} time${maxUses > 1 ? "s" : ""}.
+The customer will receive a detailed email with:
+- Registration link with pre-filled code
+- What happens after registration
+- How to connect Telegram and MetaTrader
+- Complete setup instructions
 
-Questions? Reply to this email!
+Questions? Reply to this email.
 
 Best regards,
 The Trading Bot Team
@@ -163,6 +206,11 @@ The Trading Bot Team
     // Option to generate another
     const generateAnother = await question("Generate another code? (y/n): ");
     if (generateAnother.toLowerCase() === "y") {
+      console.log("\n");
+      rl.close();
+      await AppDataSource.destroy();
+      // Restart the script
+      process.exit(0);
     } else {
       await AppDataSource.destroy();
       rl.close();

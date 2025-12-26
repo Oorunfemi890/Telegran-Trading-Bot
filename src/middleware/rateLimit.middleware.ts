@@ -88,21 +88,34 @@ export const rateLimit = (options: RateLimitOptions) => {
   };
 };
 
-// Predefined rate limiters
+// UPDATED RATE LIMITERS - More generous limits
 export const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  maxRequests: 5,
-  message: 'Too many authentication attempts, please try again later',
+  maxRequests: 50, // 50 attempts per 15 minutes (was 5)
+  message: 'Too many authentication attempts, please try again in 15 minutes',
 });
 
 export const apiRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  maxRequests: 100,
-  message: 'API rate limit exceeded',
+  maxRequests: 200, // 200 requests per minute (was 100)
+  message: 'API rate limit exceeded, please try again shortly',
+});
+
+export const registrationRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  maxRequests: 100, // 100 registrations per minute
+  message: 'Registration rate limit exceeded',
 });
 
 export const strictRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  maxRequests: 10,
+  maxRequests: 50, // 50 requests per minute (was 10)
   message: 'Rate limit exceeded',
+});
+
+// For trade execution - very high limit
+export const tradeExecutionRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  maxRequests: 500, // 500 trades per minute
+  message: 'Trade execution rate limit exceeded',
 });

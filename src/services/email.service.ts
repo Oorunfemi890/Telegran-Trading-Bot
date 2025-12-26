@@ -1,174 +1,250 @@
 // FILE: src/services/email.service.ts
 // =============================================
-import sgMail from '../config/email.config';
-import { emailConfig } from '../config/email.config';
-import AppDataSource from '../config/database.config';
-import { EmailLog } from '../database/entities/EmailLog.entity';
-import { EmailNotificationType, EmailDeliveryStatus } from '../types';
-import { Queue, Worker } from 'bullmq';
-import { getRedisClient } from '../config/redis.config';
+import nodemailer from "nodemailer";
+import AppDataSource from "../config/database.config";
+import { EmailLog } from "../database/entities/EmailLog.entity";
+import { User } from "../database/entities/User.entity";
+import { EmailNotificationType, EmailDeliveryStatus } from "../types";
+import { Queue, Worker } from "bullmq";
+import { getRedisClient } from "../config/redis.config";
+import {
+  generateInvitationEmail,
+  generateWelcomeEmail,
+  InvitationEmailData,
+  WelcomeEmailData,
+} from "../templates/email.templates";
 
 export interface EmailData {
   to: string;
   subject: string;
   html: string;
   text: string;
-  userId: string;
+  userId?: string;
   emailType: EmailNotificationType;
 }
 
 export class EmailService {
   private emailLogRepo = AppDataSource.getRepository(EmailLog);
+  private userRepo = AppDataSource.getRepository(User);
   private emailQueue: Queue | null = null;
+  private transporter: nodemailer.Transporter | null = null;
 
   constructor() {
+    this.initializeTransporter();
     this.initializeQueue();
+  }
+
+  private initializeTransporter() {
+    const emailProvider = process.env.EMAIL_PROVIDER || "gmail";
+
+    if (emailProvider === "sendgrid") {
+      const sendgridApiKey = process.env.SENDGRID_API_KEY;
+      if (sendgridApiKey && sendgridApiKey !== "") {
+        this.transporter = nodemailer.createTransport({
+          host: "smtp.sendgrid.net",
+          port: 587,
+          auth: {
+            user: "apikey",
+            pass: sendgridApiKey,
+          },
+        });
+        console.log("✅ SendGrid transporter initialized");
+      }
+    } else {
+      const emailUser = process.env.EMAIL_USER || process.env.EMAIL_FROM;
+      const emailPass =
+        process.env.EMAIL_PASSWORD || process.env.EMAIL_APP_PASSWORD;
+
+      if (emailUser && emailPass) {
+        this.transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+            user: emailUser,
+            pass: emailPass,
+          },
+        });
+        console.log("✅ Gmail transporter initialized");
+      }
+    }
+
+    if (!this.transporter) {
+      console.log(
+        "⚠️  Email transporter not initialized - emails will not be sent"
+      );
+    }
   }
 
   private initializeQueue() {
     const redis = getRedisClient();
-    
-    if (redis && redis.status === 'ready') {
-      this.emailQueue = new Queue('email-delivery', {
+
+    if (redis && redis.status === "ready") {
+      this.emailQueue = new Queue("email-delivery", {
         connection: redis,
       });
-      console.log('✅ Email queue initialized');
-      
-      // Start worker
+      console.log("✅ Email queue initialized");
+
       this.startWorker();
     } else {
-      console.log('⚠️  Email queue not initialized - Redis unavailable');
+      console.log(
+        "⚠️  Email queue not initialized - emails will send directly"
+      );
     }
   }
 
   private startWorker() {
     const redis = getRedisClient();
-    
+
     if (!redis) return;
 
     new Worker(
-      'email-delivery',
+      "email-delivery",
       async (job) => {
         const emailData: EmailData = job.data;
         return await this.sendEmailDirect(emailData);
       },
       {
         connection: redis,
-        concurrency: 5, // Process 5 emails concurrently
+        concurrency: 5,
       }
     );
 
-    console.log('✅ Email worker started');
+    console.log("✅ Email worker started");
   }
 
   /**
    * Queue email for delivery
    */
-  async queueEmail(emailData: EmailData): Promise<void> {
-    if (!emailConfig.enabled) {
-      console.log('📧 Email queued (but sending disabled):', emailData.subject);
+  private async queueEmail(emailData: EmailData): Promise<void> {
+    if (!this.transporter) {
+      console.log(
+        "📧 Email not sent (transporter disabled):",
+        emailData.subject
+      );
       return;
     }
 
     if (this.emailQueue) {
-      await this.emailQueue.add('send-email', emailData, {
+      await this.emailQueue.add("send-email", emailData, {
         attempts: 3,
         backoff: {
-          type: 'exponential',
+          type: "exponential",
           delay: 2000,
         },
       });
-      console.log('📧 Email queued:', emailData.subject);
+      console.log("📧 Email queued:", emailData.subject);
     } else {
-      // Fallback: send directly if no queue
       await this.sendEmailDirect(emailData);
     }
   }
 
   /**
-   * Send email directly (used by worker or as fallback)
+   * Send email directly
    */
   private async sendEmailDirect(emailData: EmailData): Promise<void> {
     const { to, subject, html, text, userId, emailType } = emailData;
 
-    // Create log entry
-    const emailLog = this.emailLogRepo.create({
-      user_id: userId,
-      emailType,
-      subject,
-      status: EmailDeliveryStatus.QUEUED,
-    });
-
     try {
-      if (!emailConfig.enabled || !emailConfig.apiKey) {
-        console.log('📧 Email (not sent - disabled):', subject);
-        emailLog.status = EmailDeliveryStatus.FAILED;
-        emailLog.errorMessage = 'Email service disabled';
-        await this.emailLogRepo.save(emailLog);
+      // Only log if userId is provided
+      if (userId) {
+        const userExists = await this.userRepo.findOne({
+          where: { id: userId },
+        });
+
+        if (!userExists) {
+          console.error(`❌ Cannot log email: User ${userId} does not exist`);
+        }
+      }
+
+      if (!this.transporter) {
+        console.log("📧 Email (not sent - transporter disabled):", subject);
         return;
       }
 
-      const msg = {
-        to,
+      const mailOptions = {
         from: {
-          email: emailConfig.fromEmail,
-          name: emailConfig.fromName,
+          name: process.env.EMAIL_FROM_NAME || "Trading Bot",
+          address: process.env.EMAIL_FROM || "noreply@tradingbot.com",
         },
+        to,
         subject,
         text,
         html,
       };
 
-      await sgMail.send(msg);
+      await this.transporter.sendMail(mailOptions);
 
-      emailLog.status = EmailDeliveryStatus.SENT;
-      await this.emailLogRepo.save(emailLog);
+      // Create success log only if userId exists and user is in database
+      if (userId) {
+        const userExists = await this.userRepo.findOne({
+          where: { id: userId },
+        });
 
-      console.log('✅ Email sent:', subject);
+        if (userExists) {
+          const emailLog = this.emailLogRepo.create({
+            user_id: userId,
+            emailType,
+            subject,
+            status: EmailDeliveryStatus.SENT,
+          });
+          await this.emailLogRepo.save(emailLog);
+        }
+      }
+
+      console.log("✅ Email sent:", subject);
     } catch (error: any) {
-      console.error('❌ Email send failed:', error.message);
-      
-      emailLog.status = EmailDeliveryStatus.FAILED;
-      emailLog.errorMessage = error.message;
-      await this.emailLogRepo.save(emailLog);
+      console.error("❌ Email send failed:", error.message);
+
+      if (userId) {
+        try {
+          const userExists = await this.userRepo.findOne({
+            where: { id: userId },
+          });
+
+          if (userExists) {
+            const emailLog = this.emailLogRepo.create({
+              user_id: userId,
+              emailType,
+              subject,
+              status: EmailDeliveryStatus.FAILED,
+              errorMessage: error.message,
+            });
+            await this.emailLogRepo.save(emailLog);
+          }
+        } catch (logError) {
+          console.error("❌ Failed to log email error:", logError);
+        }
+      }
 
       throw error;
     }
   }
 
   /**
+   * Send invitation code to customer (no userId yet)
+   */
+  async sendInvitationCodeEmail(data: InvitationEmailData): Promise<void> {
+    const { subject, html, text } = generateInvitationEmail(data);
+
+    await this.queueEmail({
+      to: data.customerEmail,
+      subject,
+      html,
+      text,
+      emailType: EmailNotificationType.INVITATION_CODE,
+    });
+  }
+
+  /**
    * Send welcome email after registration
    */
   async sendWelcomeEmail(
-    email: string,
-    fullName: string,
+    data: WelcomeEmailData,
     userId: string
   ): Promise<void> {
-    const subject = `Welcome to ${emailConfig.fromName}!`;
-    
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Welcome ${fullName}! 🎉</h2>
-        <p>Your trading bot account has been created successfully.</p>
-        
-        <h3>Next Steps:</h3>
-        <ol>
-          <li>Configure your risk settings</li>
-          <li>Connect your MetaTrader account</li>
-          <li>Subscribe to signal channels</li>
-          <li>Start automated trading!</li>
-        </ol>
-        
-        <p>Need help? Reply to this email or visit our support center.</p>
-        
-        <p>Happy Trading!<br>The Trading Bot Team</p>
-      </div>
-    `;
-
-    const text = `Welcome ${fullName}! Your trading bot account has been created successfully.`;
+    const { subject, html, text } = generateWelcomeEmail(data);
 
     await this.queueEmail({
-      to: email,
+      to: data.email,
       subject,
       html,
       text,
@@ -186,7 +262,7 @@ export class EmailService {
     tradeDetails: any
   ): Promise<void> {
     const subject = `🔔 Trade Opened: ${tradeDetails.symbol} ${tradeDetails.direction.toUpperCase()}`;
-    
+
     const html = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Trade Opened Successfully! 🎯</h2>
@@ -197,7 +273,7 @@ export class EmailService {
           <p><strong>Positions:</strong> ${tradeDetails.totalPositions}</p>
           <p><strong>Lot Size:</strong> ${tradeDetails.lotSize} per position</p>
           <p><strong>Stop Loss:</strong> ${tradeDetails.stopLoss}</p>
-          <p><strong>Take Profits:</strong> ${tradeDetails.takeProfits.map((tp: any) => tp.price).join(', ')}</p>
+          <p><strong>Take Profits:</strong> ${tradeDetails.takeProfits.map((tp: any) => tp.price).join(", ")}</p>
           <p><strong>Risk Amount:</strong> $${tradeDetails.riskAmount.toFixed(2)}</p>
         </div>
         
@@ -216,54 +292,6 @@ export class EmailService {
       text,
       userId,
       emailType: EmailNotificationType.TRADE_OPENED,
-    });
-  }
-
-  /**
-   * Send email verification
-   */
-  async sendVerificationEmail(
-    email: string,
-    fullName: string,
-    userId: string,
-    verificationToken: string
-  ): Promise<void> {
-    const verificationUrl = `${process.env.APP_URL}/api/v1/auth/verify-email/${verificationToken}`;
-    
-    const subject = 'Verify Your Email Address';
-    
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Verify Your Email Address</h2>
-        <p>Hi ${fullName},</p>
-        <p>Please click the button below to verify your email address:</p>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${verificationUrl}" 
-             style="background: #007bff; color: white; padding: 12px 30px; 
-                    text-decoration: none; border-radius: 5px; display: inline-block;">
-            Verify Email
-          </a>
-        </div>
-        
-        <p>Or copy and paste this link:</p>
-        <p style="color: #666; font-size: 14px;">${verificationUrl}</p>
-        
-        <p>This link expires in 24 hours.</p>
-        
-        <p>If you didn't create an account, please ignore this email.</p>
-      </div>
-    `;
-
-    const text = `Verify your email: ${verificationUrl}`;
-
-    await this.queueEmail({
-      to: email,
-      subject,
-      html,
-      text,
-      userId,
-      emailType: EmailNotificationType.WELCOME,
     });
   }
 }
