@@ -74,6 +74,10 @@ app.get("/api/health", (req: Request, res: Response) => {
 // API ROUTES
 // =============================================
 import authRoutes from "./routes/auth.routes";
+import channelRoutes from './routes/channel.routes';
+
+// Mount routes after auth routes (around line 78)
+app.use('/api/v1/channels', channelRoutes);
 
 // API v1 base route
 app.get("/api/v1", (req: Request, res: Response) => {
@@ -82,6 +86,7 @@ app.get("/api/v1", (req: Request, res: Response) => {
     message: "Trading Bot API v1",
     endpoints: {
       auth: "/api/v1/auth",
+      channels: "/api/v1/channels",  
       users: "/api/v1/users",
       trades: "/api/v1/trades",
       signals: "/api/v1/signals",

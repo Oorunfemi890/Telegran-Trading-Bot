@@ -1,4 +1,4 @@
-// FILE: src/services/email.service.ts
+// FILE: src/services/email.service.ts (COMPLETE WITH ALL TEMPLATES)
 // =============================================
 import nodemailer from "nodemailer";
 import AppDataSource from "../config/database.config";
@@ -7,12 +7,34 @@ import { User } from "../database/entities/User.entity";
 import { EmailNotificationType, EmailDeliveryStatus } from "../types";
 import { Queue, Worker } from "bullmq";
 import { getRedisClient } from "../config/redis.config";
+
+// Import all email templates
 import {
   generateInvitationEmail,
   generateWelcomeEmail,
   InvitationEmailData,
   WelcomeEmailData,
 } from "../templates/email.templates";
+import {
+  generateTradeOpenedEmail,
+  TradeOpenedData,
+} from "../templates/trade-opened.template";
+import {
+  generateBreakevenActivatedEmail,
+  BreakevenActivatedData,
+} from "../templates/breakeven-activated.template";
+import {
+  generateTakeProfitHitEmail,
+  TakeProfitHitData,
+} from "../templates/takeprofit-hit.template";
+import {
+  generateStopLossHitEmail,
+  StopLossHitData,
+} from "../templates/stoploss-hit.template";
+import {
+  generateTradeCompletedEmail,
+  TradeCompletedData,
+} from "../templates/trade-completed.template";
 
 export interface EmailData {
   to: string;
@@ -144,7 +166,6 @@ export class EmailService {
     const { to, subject, html, text, userId, emailType } = emailData;
 
     try {
-      // Only log if userId is provided
       if (userId) {
         const userExists = await this.userRepo.findOne({
           where: { id: userId },
@@ -173,7 +194,6 @@ export class EmailService {
 
       await this.transporter.sendMail(mailOptions);
 
-      // Create success log only if userId exists and user is in database
       if (userId) {
         const userExists = await this.userRepo.findOne({
           where: { id: userId },
@@ -257,33 +277,11 @@ export class EmailService {
    * Send trade opened notification
    */
   async sendTradeOpenedEmail(
-    email: string,
+    data: TradeOpenedData,
     userId: string,
-    tradeDetails: any
+    email: string
   ): Promise<void> {
-    const subject = `🔔 Trade Opened: ${tradeDetails.symbol} ${tradeDetails.direction.toUpperCase()}`;
-
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Trade Opened Successfully! 🎯</h2>
-        
-        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p><strong>Symbol:</strong> ${tradeDetails.symbol}</p>
-          <p><strong>Direction:</strong> ${tradeDetails.direction.toUpperCase()}</p>
-          <p><strong>Positions:</strong> ${tradeDetails.totalPositions}</p>
-          <p><strong>Lot Size:</strong> ${tradeDetails.lotSize} per position</p>
-          <p><strong>Stop Loss:</strong> ${tradeDetails.stopLoss}</p>
-          <p><strong>Take Profits:</strong> ${tradeDetails.takeProfits.map((tp: any) => tp.price).join(", ")}</p>
-          <p><strong>Risk Amount:</strong> $${tradeDetails.riskAmount.toFixed(2)}</p>
-        </div>
-        
-        <p>All positions have been placed successfully. We'll notify you of any updates!</p>
-        
-        <p>Good luck!<br>The Trading Bot Team</p>
-      </div>
-    `;
-
-    const text = `Trade opened: ${tradeDetails.symbol} ${tradeDetails.direction.toUpperCase()}`;
+    const { subject, html, text } = generateTradeOpenedEmail(data);
 
     await this.queueEmail({
       to: email,
@@ -292,6 +290,86 @@ export class EmailService {
       text,
       userId,
       emailType: EmailNotificationType.TRADE_OPENED,
+    });
+  }
+
+  /**
+   * Send breakeven activated notification
+   */
+  async sendBreakevenActivatedEmail(
+    data: BreakevenActivatedData,
+    userId: string,
+    email: string
+  ): Promise<void> {
+    const { subject, html, text } = generateBreakevenActivatedEmail(data);
+
+    await this.queueEmail({
+      to: email,
+      subject,
+      html,
+      text,
+      userId,
+      emailType: EmailNotificationType.BREAKEVEN_ACTIVATED,
+    });
+  }
+
+  /**
+   * Send take profit hit notification
+   */
+  async sendTakeProfitHitEmail(
+    data: TakeProfitHitData,
+    userId: string,
+    email: string
+  ): Promise<void> {
+    const { subject, html, text } = generateTakeProfitHitEmail(data);
+
+    await this.queueEmail({
+      to: email,
+      subject,
+      html,
+      text,
+      userId,
+      emailType: EmailNotificationType.TAKE_PROFIT_HIT,
+    });
+  }
+
+  /**
+   * Send stop loss hit notification
+   */
+  async sendStopLossHitEmail(
+    data: StopLossHitData,
+    userId: string,
+    email: string
+  ): Promise<void> {
+    const { subject, html, text } = generateStopLossHitEmail(data);
+
+    await this.queueEmail({
+      to: email,
+      subject,
+      html,
+      text,
+      userId,
+      emailType: EmailNotificationType.STOP_LOSS_HIT,
+    });
+  }
+
+  /**
+   * Send trade completed notification
+   */
+  async sendTradeCompletedEmail(
+    data: TradeCompletedData,
+    userId: string,
+    email: string
+  ): Promise<void> {
+    const { subject, html, text } = generateTradeCompletedEmail(data);
+
+    await this.queueEmail({
+      to: email,
+      subject,
+      html,
+      text,
+      userId,
+      emailType: EmailNotificationType.TRADE_COMPLETED,
     });
   }
 }
