@@ -123,10 +123,10 @@ export class SignalParser {
    */
   private parseInlineFormat(text: string): ParserResult {
     try {
-      const normalized = text.toUpperCase();
+      const textUpper = text.toUpperCase();
       
-      const direction = this.extractDirection(normalized);
-      const symbol = this.extractSymbol(normalized);
+      const direction = this.extractDirection(textUpper);
+      const symbol = this.extractSymbol(textUpper);
 
       if (!direction || !symbol) {
         return { success: false, confidence: 0 };
@@ -194,8 +194,6 @@ export class SignalParser {
    */
   private parseCasualFormat(text: string): ParserResult {
     try {
-      const normalized = text.toLowerCase();
-      
       const direction = this.extractDirection(text);
       const symbol = this.extractSymbol(text);
 
@@ -395,8 +393,6 @@ export class SignalParser {
     const takeProfits: Array<{ level: number; price: number }> = [];
     
     for (const part of textParts) {
-      const normalized = part.toLowerCase();
-      
       // Look for TP1, TP2, TP3, etc.
       const tpMatch = part.match(/tp(\d+)[\s:]*(\d+\.?\d*)/i);
       if (tpMatch) {

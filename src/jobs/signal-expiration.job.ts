@@ -48,6 +48,7 @@ export class SignalExpirationJob {
 
   /**
    * Check and expire old signals
+   * FIXED: expireOldSignals() now returns Promise<number>
    */
   private async checkExpiredSignals(): Promise<void> {
     try {

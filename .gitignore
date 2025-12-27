@@ -1,21 +1,24 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment variables
 .env
+
+# Build output
+dist/
+
+# Logs
 logs
-dist
+*.log
+
+# Editor
 .vscode/
+
+# Certificates / secrets
 *.csr
 *.pem
 *.key
-**.package-lock.json
-*.package-lock.json
-/package-lock.json
-
-# Infrastructure
-infrastructure/terraform/.terraform/
-infrastructure/terraform/*.tfstate
-infrastructure/terraform/*.tfstate.backup
-infrastructure/terraform/.terraform.lock.hcl
-infrastructure/terraform/terraform.tfvars
-infrastructure/terraform/*.tfplan
-*.json
 key-base64.txt
+
+# Lock file (optional — see note below)
+package-lock.json

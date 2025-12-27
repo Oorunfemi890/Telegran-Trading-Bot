@@ -1,6 +1,6 @@
 // FILE: src/services/risk.calculator.ts
 // =============================================
-import { RiskParameters, SymbolSpecification } from '../types';
+import { SymbolSpecification } from '../types';
 import { calculatePipDistance, roundToLotStep } from '../helpers/math.helper';
 
 export interface RiskCalculationInput {

@@ -2,11 +2,10 @@
 // =============================================
 import AppDataSource from '../config/database.config';
 import { Signal } from '../database/entities/Signal.entity';
-import { User } from '../database/entities/User.entity';
 import { UserChannelSubscription } from '../database/entities/UserChannelSubscription.entity';
 import { UserSettings } from '../database/entities/UserSettings.entity';
 import { Trade } from '../database/entities/Trade.entity';
-import { SignalStatus, TradeStatus } from '../types';
+import { SignalStatus, TradeStatus, TradeDirection } from '../types';
 import { isWithinTradingHours } from '../helpers/date.helper';
 import { Queue } from 'bullmq';
 import { getRedisClient } from '../config/redis.config';
@@ -21,7 +20,6 @@ export interface UserMatchResult {
 
 export class SignalHandler {
   private signalRepo = AppDataSource.getRepository(Signal);
-  private userRepo = AppDataSource.getRepository(User);
   private subscriptionRepo = AppDataSource.getRepository(UserChannelSubscription);
   private settingsRepo = AppDataSource.getRepository(UserSettings);
   private tradeRepo = AppDataSource.getRepository(Trade);
@@ -281,7 +279,7 @@ export class SignalHandler {
   async checkForDuplicate(
     channelId: string,
     symbol: string,
-    direction: string,
+    direction: TradeDirection,
     entryPrice: number,
     timeWindowMinutes: number = 30
   ): Promise<Signal | null> {

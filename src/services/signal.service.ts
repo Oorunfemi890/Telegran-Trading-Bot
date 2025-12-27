@@ -131,8 +131,9 @@ export class SignalService {
 
   /**
    * Check and expire old signals
+   * FIXED: Now returns Promise<number> instead of Promise<void>
    */
-  async expireOldSignals() {
+  async expireOldSignals(): Promise<number> {
     const now = new Date();
     
     const oldSignals = await this.signalRepo.find({
@@ -151,5 +152,7 @@ export class SignalService {
     if (expiredCount > 0) {
       console.log(`⏰ Expired ${expiredCount} old signals`);
     }
+
+    return expiredCount;
   }
 }
