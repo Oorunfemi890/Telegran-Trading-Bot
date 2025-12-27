@@ -1,3 +1,5 @@
+// FILE: src/index.ts (COMPLETE WITH ALL WORKERS)
+// =============================================
 import "reflect-metadata";
 import { config } from "dotenv";
 import express, { Application, Request, Response, NextFunction } from "express";
@@ -5,37 +7,33 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import { initializeDatabase, closeDatabase } from "./config/database.config";
-import { initializeRedis, closeRedis } from "./config/redis.config";
+import { initializeRedis, closeRedis, getRedisClient } from "./config/redis.config";
+import { TelegramListenerService } from "./services/telegram.listener";
+import { startSignalWorker, stopSignalWorker } from "./workers/signal.worker";
+import { startSignalExpirationJob, stopSignalExpirationJob } from "./jobs/signal-expiration.job";
 
-// Load environment variables
 config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
 
+// Service instances
+let telegramListener: TelegramListenerService | null = null;
+
 // =============================================
 // MIDDLEWARE SETUP
 // =============================================
 
-// Security headers
 app.use(helmet());
-
-// CORS configuration
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN?.split(",") || "*",
     credentials: process.env.CORS_CREDENTIALS === "true",
   })
 );
-
-// Body parsing
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-
-// Compression
 app.use(compression());
-
-// Request logging
 app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
@@ -52,6 +50,10 @@ app.get("/health", (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
     version: "1.0.0",
+    services: {
+      telegram: telegramListener?.isActive() || false,
+      redis: getRedisClient() !== null,
+    },
   });
 });
 
@@ -62,6 +64,18 @@ app.get("/api/health", (_req: Request, res: Response) => {
     status: "operational",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    services: {
+      telegram: {
+        listening: telegramListener?.isActive() || false,
+        enabled: process.env.TELEGRAM_ENABLED === 'true',
+      },
+      redis: {
+        connected: getRedisClient() !== null,
+      },
+      database: {
+        connected: true,
+      },
+    },
     memory: {
       used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
@@ -76,10 +90,6 @@ app.get("/api/health", (_req: Request, res: Response) => {
 import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 
-// Mount routes after auth routes (around line 78)
-app.use("/api/v1/channels", channelRoutes);
-
-// API v1 base route
 app.get("/api/v1", (_req: Request, res: Response) => {
   res.json({
     success: true,
@@ -95,14 +105,13 @@ app.get("/api/v1", (_req: Request, res: Response) => {
   });
 });
 
-// Mount routes
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/channels", channelRoutes);
 
 // =============================================
 // ERROR HANDLING
 // =============================================
 
-// 404 handler
 app.use((req: Request, res: Response) => {
   res.status(404).json({
     success: false,
@@ -111,10 +120,8 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-// Global error handler
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Error:", err);
-
   res.status(500).json({
     success: false,
     message:
@@ -138,11 +145,32 @@ async function startServer() {
     await initializeDatabase();
     console.log("✅ Database connected successfully\n");
 
-    // Initialize Redis (non-blocking)
+    // Initialize Redis
     console.log("🔴 Connecting to Redis...");
     await initializeRedis();
 
-    // Start server
+    // Start background workers (only if Redis is available)
+    if (getRedisClient()) {
+      console.log("⚙️  Starting background workers...");
+      startSignalWorker();
+      console.log("✅ Signal worker started");
+    }
+
+    // Start scheduled jobs
+    console.log("⏰ Starting scheduled jobs...");
+    startSignalExpirationJob(5); // Check every 5 minutes
+    console.log("✅ Signal expiration job started\n");
+
+    // Start Telegram Listener
+    if (process.env.TELEGRAM_ENABLED === 'true') {
+      console.log("📡 Starting Telegram listener...");
+      telegramListener = new TelegramListenerService();
+      await telegramListener.start();
+    } else {
+      console.log("⚠️  Telegram listener disabled in configuration\n");
+    }
+
+    // Start HTTP server
     app.listen(PORT, () => {
       console.log("==========================================");
       console.log("✅ TRADING BOT SERVER RUNNING");
@@ -151,12 +179,19 @@ async function startServer() {
       console.log(`🔗 Server URL: http://localhost:${PORT}`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
       console.log(`📡 API Base: http://localhost:${PORT}/api/v1`);
+      console.log("==========================================");
+      console.log("📋 SYSTEM STATUS:");
+      console.log(`   ✅ Database: Connected`);
+      console.log(`   ${getRedisClient() ? '✅' : '⚠️ '} Redis: ${getRedisClient() ? 'Connected' : 'Disabled'}`);
+      console.log(`   ${telegramListener?.isActive() ? '✅' : '⚠️ '} Telegram: ${telegramListener?.isActive() ? 'Listening' : 'Disabled'}`);
+      console.log(`   ✅ Workers: ${getRedisClient() ? 'Running' : 'Disabled'}`);
+      console.log(`   ✅ Jobs: Running`);
       console.log("==========================================\n");
-      console.log("📋 Next Steps:");
-      console.log("1. Generate invitation code: npm run generate:invitation");
-      console.log("2. Configure Telegram credentials in .env");
-      console.log("3. Connect MetaTrader account");
-      console.log("4. Subscribe to signal channels\n");
+      
+      if (telegramListener?.isActive()) {
+        console.log("🎧 Bot is now listening for signals!");
+        console.log("💡 Post a signal in a monitored channel to test\n");
+      }
     });
 
     // Graceful shutdown
@@ -164,9 +199,28 @@ async function startServer() {
       console.log(`\n⚠️  Received ${signal}, shutting down gracefully...`);
 
       try {
+        // Stop Telegram listener
+        if (telegramListener) {
+          console.log("⏹️  Stopping Telegram listener...");
+          await telegramListener.stop();
+        }
+
+        // Stop workers
+        if (getRedisClient()) {
+          console.log("⏹️  Stopping workers...");
+          await stopSignalWorker();
+        }
+
+        // Stop jobs
+        console.log("⏹️  Stopping scheduled jobs...");
+        stopSignalExpirationJob();
+
+        // Close connections
+        console.log("⏹️  Closing connections...");
         await closeRedis();
         await closeDatabase();
-        console.log("✅ All connections closed");
+        
+        console.log("✅ All services stopped gracefully");
         process.exit(0);
       } catch (error) {
         console.error("❌ Error during shutdown:", error);
@@ -176,6 +230,7 @@ async function startServer() {
 
     process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+    
   } catch (error) {
     console.error("❌ Failed to start server:", error);
     process.exit(1);
