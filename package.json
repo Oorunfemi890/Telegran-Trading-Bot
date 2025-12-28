@@ -18,6 +18,7 @@
     "schema:sync": "npm run typeorm -- schema:sync -d src/database/data-source.ts",
     "schema:drop": "npm run typeorm -- schema:drop -d src/database/data-source.ts",
     "test:email": "ts-node -r tsconfig-paths/register src/scripts/test-email.ts",
+    "test:telegram": "ts-node -r tsconfig-paths/register src/scripts/test-telegram-listener.ts",
     "telegram:auth": "ts-node -r tsconfig-paths/register src/scripts/telegram-auth.ts",
     "seed": "ts-node -r tsconfig-paths/register src/database/seeders/index.ts",
     "seed:super-admin": "ts-node -r tsconfig-paths/register src/scripts/create-super-admin.ts",
