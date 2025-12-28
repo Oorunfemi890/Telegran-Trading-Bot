@@ -1,9 +1,8 @@
-// FILE: src/services/telegram.listener.ts (HYBRID - POLLING + EVENTS)
+// FILE: src/services/telegram.listener.ts (OPTIMIZED - NO QUERY SPAM)
 // =============================================
 import { TelegramClient } from "telegram";
 import { StringSession } from "telegram/sessions";
 import { NewMessage, NewMessageEvent } from "telegram/events";
-import { Api } from "telegram/tl";
 import {
   telegramConfig,
   validateTelegramConfig,
@@ -12,8 +11,10 @@ import { SignalService } from "./signal.service";
 import { SignalHandler } from "../handlers/signal.handler";
 import AppDataSource from "../config/database.config";
 import { TelegramChannel } from "../database/entities/TelegramChannel.entity";
+import { Signal } from "../database/entities/Signal.entity";
 import { Queue } from "bullmq";
 import { getRedisClient } from "../config/redis.config";
+import { In } from "typeorm";
 
 export class TelegramListenerService {
   private client: TelegramClient | null = null;
@@ -21,12 +22,11 @@ export class TelegramListenerService {
   private signalHandler: SignalHandler;
   private signalQueue: Queue | null = null;
   private isListening = false;
-  private monitoredChannels: Map<string, string> = new Map(); // channelId -> title
-  private processedMessageIds: Set<string> = new Set(); // Track processed messages
-  private lastCheckedMessageId: Map<string, number> = new Map(); // Track last message ID per channel
+  private monitoredChannels: Map<string, string> = new Map();
   private pollingInterval: NodeJS.Timeout | null = null;
   private eventHandlerAdded = false;
-  private startTime: Date = new Date(); // When listener started
+  private startTime: Date = new Date();
+  private processedInSession = new Set<string>(); // In-memory cache for this session
 
   constructor() {
     this.signalService = new SignalService();
@@ -34,9 +34,6 @@ export class TelegramListenerService {
     this.initializeQueue();
   }
 
-  /**
-   * Initialize signal processing queue
-   */
   private initializeQueue() {
     const redis = getRedisClient();
     if (redis && redis.status === "ready") {
@@ -47,9 +44,6 @@ export class TelegramListenerService {
     }
   }
 
-  /**
-   * Start listening to Telegram messages
-   */
   async start(): Promise<boolean> {
     try {
       console.log("🎧 Starting Telegram listener...");
@@ -59,7 +53,6 @@ export class TelegramListenerService {
         return false;
       }
 
-      // Create client
       this.client = new TelegramClient(
         new StringSession(telegramConfig.sessionString),
         telegramConfig.apiId,
@@ -73,19 +66,15 @@ export class TelegramListenerService {
         }
       );
 
-      // Connect
       console.log("🔄 Connecting to Telegram...");
       await this.client.connect();
       console.log("✅ Connected to Telegram\n");
 
-      // Load channels to monitor
       await this.loadChannelsToMonitor();
 
-      // Register event handler
       console.log("📡 Registering message event handler...");
       this.setupEventHandler();
 
-      // Start polling for missed messages
       console.log("🔄 Starting message polling...");
       this.startPolling();
 
@@ -99,9 +88,6 @@ export class TelegramListenerService {
     }
   }
 
-  /**
-   * Setup real-time event handler
-   */
   private setupEventHandler(): void {
     if (!this.client || this.eventHandlerAdded) {
       return;
@@ -119,20 +105,16 @@ export class TelegramListenerService {
     console.log("✅ Event handler registered");
   }
 
-  /**
-   * Start polling for messages (backup for missed events)
-   */
   private startPolling(): void {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
     }
 
-    // Poll every 2 seconds
     this.pollingInterval = setInterval(async () => {
       try {
         await this.pollChannels();
       } catch (error) {
-        console.error("❌ Polling error:", error);
+        // Silently ignore polling errors
       }
     }, 2000);
 
@@ -140,7 +122,7 @@ export class TelegramListenerService {
   }
 
   /**
-   * Poll channels for new messages
+   * OPTIMIZED: Batch check all messages at once
    */
   private async pollChannels(): Promise<void> {
     if (!this.client || !this.isListening) {
@@ -150,116 +132,156 @@ export class TelegramListenerService {
     try {
       for (const [channelId, channelTitle] of this.monitoredChannels) {
         try {
-          // Convert string ID to proper format
           let entity: any;
-
           try {
-            // Try as channel ID first
             entity = await this.client.getEntity(parseInt(channelId));
           } catch {
-            try {
-              // Try as negative channel ID
-              entity = await this.client.getEntity(parseInt(channelId));
-            } catch {
-              // Skip this channel
-              continue;
-            }
-          }
-
-          if (!entity) {
             continue;
           }
 
-          // Get recent messages (last 10)
+          if (!entity) continue;
+
           const messages = await this.client.getMessages(entity, {
             limit: 10,
           });
 
-          // Process each message
-          for (const message of messages) {
-            const msgId = `${channelId}-${message.id}`;
+          // Collect all message IDs and filter
+          const messagesToCheck: Array<{
+            id: number;
+            text: string;
+            date: Date;
+          }> = [];
 
-            // Skip if already processed
-            if (this.processedMessageIds.has(msgId)) {
+          for (const message of messages) {
+            const messageId = message.id.toString();
+            const msgKey = `${channelId}-${messageId}`;
+
+            // Quick in-memory check first
+            if (this.processedInSession.has(msgKey)) {
               continue;
             }
 
-            // Mark as processed
-            this.processedMessageIds.add(msgId);
+            const messageDate = new Date(message.date * 1000);
+            if (messageDate < this.startTime) {
+              continue;
+            }
 
-            // Get message text
             const messageText = message.text || message.message || "";
             if (!messageText || messageText.length < 20) {
               continue;
             }
+
+            messagesToCheck.push({
+              id: message.id,
+              text: messageText,
+              date: messageDate,
+            });
+          }
+
+          // No new messages to check
+          if (messagesToCheck.length === 0) {
+            continue;
+          }
+
+          // BATCH DATABASE CHECK - Single query instead of N queries
+          const messageIds = messagesToCheck.map((m) => m.id.toString());
+          const signalRepo = AppDataSource.getRepository(Signal);
+
+          const existingSignals = await signalRepo.find({
+            where: {
+              messageId: In(messageIds),
+              channel: { channelId: channelId },
+            },
+            select: ["messageId"],
+          });
+
+          const existingMessageIds = new Set(
+            existingSignals.map((s) => s.messageId)
+          );
+
+          // Process only new messages
+          for (const msg of messagesToCheck) {
+            const messageId = msg.id.toString();
+            const msgKey = `${channelId}-${messageId}`;
+
+            if (existingMessageIds.has(messageId)) {
+              this.processedInSession.add(msgKey); // Cache it
+              continue;
+            }
+
+            // Mark as processed in session
+            this.processedInSession.add(msgKey);
 
             console.log("\n" + "=".repeat(60));
             console.log("📨 NEW MESSAGE DETECTED (via polling)");
             console.log("=".repeat(60));
             console.log(`📍 Channel: ${channelTitle}`);
             console.log(`🆔 Chat ID: ${channelId}`);
-            console.log(`📨 Message ID: ${message.id}`);
+            console.log(`📨 Message ID: ${msg.id}`);
+            console.log(`⏰ Time: ${msg.date.toLocaleString()}`);
             console.log(
-              `⏰ Time: ${new Date(message.date * 1000).toLocaleString()}`
-            );
-            console.log(
-              `📝 Content:\n${messageText.substring(0, 200)}${
-                messageText.length > 200 ? "..." : ""
-              }`
+              `📝 Content:\n${msg.text.substring(0, 200)}${msg.text.length > 200 ? "..." : ""}`
             );
             console.log("=".repeat(60) + "\n");
 
-            // Process the message
-            await this.processMessage(channelId, messageText, message.id);
+            await this.processMessage(channelId, msg.text, msg.id);
           }
         } catch (channelError) {
-          // Silently skip channels with errors
           continue;
         }
       }
     } catch (error) {
-      // Silently ignore polling errors
       return;
     }
   }
 
   /**
-   * Handle real-time event (NEW messages only)
+   * Handle real-time event
    */
   private async handleNewMessage(event: NewMessageEvent): Promise<void> {
     try {
       const message = event.message;
       if (!message) return;
 
-      // Get the chat/channel
       const chat = await message.getChat();
-      if (!chat) {
-        return;
-      }
+      if (!chat) return;
 
       const chatId = chat.id?.toString();
       if (!chatId) return;
 
-      // Check if we're monitoring this channel
       if (!this.monitoredChannels.has(chatId)) {
         return;
       }
 
-      // Get message text
       const messageText = message.text || message.message || "";
       if (!messageText || messageText.length < 20) {
         return;
       }
 
-      const msgId = `${chatId}-${message.id}`;
+      const messageId = message.id.toString();
+      const msgKey = `${chatId}-${messageId}`;
 
-      // Skip if already processed
-      if (this.processedMessageIds.has(msgId)) {
+      // Quick in-memory check
+      if (this.processedInSession.has(msgKey)) {
         return;
       }
 
-      // Mark as processed
-      this.processedMessageIds.add(msgId);
+      // Database check
+      const signalRepo = AppDataSource.getRepository(Signal);
+      const alreadyProcessed = await signalRepo.findOne({
+        where: {
+          messageId: messageId,
+          channel: { channelId: chatId },
+        },
+        select: ["id"],
+      });
+
+      if (alreadyProcessed) {
+        this.processedInSession.add(msgKey);
+        return;
+      }
+
+      this.processedInSession.add(msgKey);
 
       const channelTitle = this.monitoredChannels.get(chatId) || "Unknown";
 
@@ -271,22 +293,16 @@ export class TelegramListenerService {
       console.log(`📨 Message ID: ${message.id}`);
       console.log(`⏰ Time: ${new Date(message.date * 1000).toLocaleString()}`);
       console.log(
-        `📝 Content:\n${messageText.substring(0, 200)}${
-          messageText.length > 200 ? "..." : ""
-        }`
+        `📝 Content:\n${messageText.substring(0, 200)}${messageText.length > 200 ? "..." : ""}`
       );
       console.log("=".repeat(60) + "\n");
 
-      // Process the message
       await this.processMessage(chatId, messageText, message.id);
     } catch (error) {
       console.error("❌ Error handling message:", error);
     }
   }
 
-  /**
-   * Process message and queue signal
-   */
   private async processMessage(
     channelId: string,
     messageText: string,
@@ -295,7 +311,6 @@ export class TelegramListenerService {
     try {
       console.log("🔄 Processing message for signal parsing...");
 
-      // Try to process the signal
       const result = await this.signalService.processMessage(
         channelId,
         messageId.toString(),
@@ -316,7 +331,6 @@ export class TelegramListenerService {
       console.log(`✅ SIGNAL PARSED AND SAVED!`);
       console.log(`   Signal ID: ${result.signalId}\n`);
 
-      // Queue for processing
       if (this.signalQueue) {
         await this.signalQueue.add(
           "process-signal",
@@ -326,7 +340,6 @@ export class TelegramListenerService {
         console.log("📤 Signal queued for user processing");
       }
 
-      // Also process immediately
       console.log("🔄 Processing signal for users...\n");
       await this.signalHandler.processNewSignal(result.signalId);
     } catch (error) {
@@ -334,9 +347,6 @@ export class TelegramListenerService {
     }
   }
 
-  /**
-   * Load channels from database
-   */
   private async loadChannelsToMonitor(): Promise<void> {
     try {
       const channelRepo = AppDataSource.getRepository(TelegramChannel);
@@ -354,10 +364,6 @@ export class TelegramListenerService {
 
       if (channels.length === 0) {
         console.log("\n⚠️  NO CHANNELS CONFIGURED!");
-        console.log("💡 To add a channel:");
-        console.log("   1. Login to dashboard");
-        console.log("   2. Go to Channels");
-        console.log("   3. Add your signal channel\n");
       } else {
         console.log("");
       }
@@ -366,18 +372,12 @@ export class TelegramListenerService {
     }
   }
 
-  /**
-   * Reload channels (hot-reload)
-   */
   async reloadChannels(): Promise<void> {
     console.log("\n🔄 Reloading channels...\n");
     this.monitoredChannels.clear();
     await this.loadChannelsToMonitor();
   }
 
-  /**
-   * Stop listening
-   */
   async stop(): Promise<void> {
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
@@ -395,33 +395,22 @@ export class TelegramListenerService {
     }
   }
 
-  /**
-   * Check if listening
-   */
   isActive(): boolean {
     return this.isListening;
   }
 
-  /**
-   * Get connection status
-   */
   getConnectionStatus(): {
     isConnected: boolean;
     isListening: boolean;
     monitoredChannels: number;
-    processedMessages: number;
   } {
     return {
       isConnected: this.client?.connected ?? false,
       isListening: this.isListening,
       monitoredChannels: this.monitoredChannels.size,
-      processedMessages: this.processedMessageIds.size,
     };
   }
 
-  /**
-   * Get monitored channels
-   */
   getMonitoredChannels(): Map<string, string> {
     return this.monitoredChannels;
   }
