@@ -1,4 +1,4 @@
-// FILE: src/services/telegram.listener.ts (UPDATED WITH QUEUE)
+// FILE: src/services/telegram.listener.ts (ALTERNATIVE - NO JOIN)
 // =============================================
 import { TelegramClientService } from './telegram.client';
 import { SignalService } from './signal.service';
@@ -15,7 +15,7 @@ export class TelegramListenerService {
   private signalHandler: SignalHandler;
   private signalQueue: Queue | null = null;
   private isListening = false;
-  private subscribedChannels: Set<string> = new Set();
+  private monitoredChannels: Map<string, string> = new Map(); // channelId -> title
 
   constructor() {
     this.telegramClient = new TelegramClientService();
@@ -51,10 +51,10 @@ export class TelegramListenerService {
         return false;
       }
 
-      // Subscribe to all active channels
-      await this.subscribeToChannels();
+      // Load channels to monitor
+      await this.loadChannelsToMonitor();
 
-      // Register message handler
+      // Register message handler (monitors ALL messages)
       this.telegramClient.onMessage(async (event: NewMessageEvent) => {
         await this.handleMessage(event);
       });
@@ -70,9 +70,9 @@ export class TelegramListenerService {
   }
 
   /**
-   * Subscribe to all active channels in database
+   * Load channels from database (don't join, just track IDs)
    */
-  private async subscribeToChannels() {
+  private async loadChannelsToMonitor() {
     try {
       const channelRepo = AppDataSource.getRepository(TelegramChannel);
       const channels = await channelRepo.find({
@@ -82,18 +82,18 @@ export class TelegramListenerService {
       console.log(`📡 Found ${channels.length} active channels to monitor`);
 
       for (const channel of channels) {
-        try {
-          await this.telegramClient.joinChannel(channel.channelId);
-          this.subscribedChannels.add(channel.channelId);
-          console.log(`✅ Monitoring: ${channel.title}`);
-        } catch (error: any) {
-          console.error(`❌ Failed to join channel ${channel.title}:`, error.message);
-        }
+        this.monitoredChannels.set(channel.channelId, channel.title);
+        console.log(`✅ Monitoring: ${channel.title} (${channel.channelId})`);
       }
 
-      console.log('');
+      if (channels.length === 0) {
+        console.log('\n⚠️  No channels configured for monitoring');
+        console.log('💡 Add a channel via API or database, then restart\n');
+      } else {
+        console.log('');
+      }
     } catch (error) {
-      console.error('❌ Error subscribing to channels:', error);
+      console.error('❌ Error loading channels:', error);
     }
   }
 
@@ -112,7 +112,7 @@ export class TelegramListenerService {
       if (!channelId) return;
 
       // Check if we're monitoring this channel
-      if (!this.subscribedChannels.has(channelId)) {
+      if (!this.monitoredChannels.has(channelId)) {
         return;
       }
 
@@ -123,8 +123,11 @@ export class TelegramListenerService {
       // Skip very short messages (likely not signals)
       if (messageText.length < 20) return;
 
+      const channelTitle = this.monitoredChannels.get(channelId);
+      
       console.log('\n📨 New message detected');
-      console.log(`📍 Channel: ${channelId}`);
+      console.log(`📍 Channel: ${channelTitle}`);
+      console.log(`🆔 ID: ${channelId}`);
       console.log(`📝 Text preview: ${messageText.substring(0, 100)}...`);
 
       // Queue the message for processing OR process directly
@@ -167,6 +170,15 @@ export class TelegramListenerService {
   }
 
   /**
+   * Reload channels from database (for hot-reload without restart)
+   */
+  async reloadChannels(): Promise<void> {
+    console.log('🔄 Reloading channels...');
+    this.monitoredChannels.clear();
+    await this.loadChannelsToMonitor();
+  }
+
+  /**
    * Stop listening
    */
   async stop() {
@@ -185,13 +197,12 @@ export class TelegramListenerService {
   }
 
   /**
-   * Add a new channel to monitor
+   * Add a new channel to monitor (without joining)
    */
-  async addChannel(channelId: string) {
+  async addChannel(channelId: string, title: string): Promise<boolean> {
     try {
-      await this.telegramClient.joinChannel(channelId);
-      this.subscribedChannels.add(channelId);
-      console.log(`✅ Now monitoring channel: ${channelId}`);
+      this.monitoredChannels.set(channelId, title);
+      console.log(`✅ Now monitoring channel: ${title}`);
       return true;
     } catch (error) {
       console.error(`❌ Failed to add channel ${channelId}:`, error);
@@ -202,8 +213,16 @@ export class TelegramListenerService {
   /**
    * Remove channel from monitoring
    */
-  removeChannel(channelId: string) {
-    this.subscribedChannels.delete(channelId);
-    console.log(`✅ Stopped monitoring channel: ${channelId}`);
+  removeChannel(channelId: string): void {
+    const title = this.monitoredChannels.get(channelId);
+    this.monitoredChannels.delete(channelId);
+    console.log(`✅ Stopped monitoring channel: ${title || channelId}`);
+  }
+
+  /**
+   * Get list of monitored channels
+   */
+  getMonitoredChannels(): Map<string, string> {
+    return this.monitoredChannels;
   }
 }
