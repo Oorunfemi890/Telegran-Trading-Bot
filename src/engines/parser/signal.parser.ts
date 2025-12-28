@@ -1,12 +1,12 @@
-// FILE: src/engines/parser/signal.parser.ts
+// FILE: src/engines/parser/signal.parser.ts (ROBUST - ALL FORMATS)
 // =============================================
-import { TradeDirection, ParsedSignal } from '../../types';
+import { TradeDirection, ParsedSignal } from "../../types";
 
 export interface ParserResult {
   success: boolean;
   signal?: ParsedSignal;
   error?: string;
-  confidence: number; // 0-100 score of how confident the parser is
+  confidence: number;
 }
 
 export class SignalParser {
@@ -14,40 +14,39 @@ export class SignalParser {
    * Main parsing function - tries multiple strategies
    */
   parse(messageText: string): ParserResult {
-    // Try structured format first (most common)
-    let result = this.parseStructuredFormat(messageText);
+    // Normalize whitespace but preserve structure
+    const normalized = messageText.trim();
+
+    // Try each parser in order of confidence
+    let result = this.parseFormatOne(normalized); // BUY EURUSD Entry: SL: TP1: TP2:
     if (result.confidence > 70) return result;
 
-    // Try inline format
-    result = this.parseInlineFormat(messageText);
+    result = this.parseFormatTwo(normalized); // BUY EURUSD @ 1.0850-1.0845 | SL: 1.0840
     if (result.confidence > 70) return result;
 
-    // Try casual format
-    result = this.parseCasualFormat(messageText);
-    if (result.confidence > 50) return result;
+    result = this.parseFormatThree(normalized); // Gold Buy @4515-4511 Sl Break 4509 Tp Open
+    if (result.confidence > 70) return result;
+
+    result = this.parseFormatFour(normalized); // XAUUSD BUY SL: 4187 (no TP)
+    if (result.confidence > 70) return result;
+
+    result = this.parseFormatFive(normalized); // Gold Buy Now! 4212 - 4209 SL: 4206
+    if (result.confidence > 70) return result;
 
     return {
       success: false,
-      error: 'Could not parse signal from message',
+      error: "Could not parse signal from message",
       confidence: 0,
     };
   }
 
   /**
-   * Parse structured format:
-   * BUY XAUUSD
-   * Entry: 2000-1995
-   * SL: 1990
-   * TP1: 2010
-   * TP2: 2020
-   * TP3: 2030
+   * Format 1: BUY EURUSD\nEntry: 1.0850-1.0845\nSL: 1.0840\nTP1: 1.0860
    */
-  private parseStructuredFormat(text: string): ParserResult {
+  private parseFormatOne(text: string): ParserResult {
     try {
-      const lines = text.split('\n').map(l => l.trim());
-      
       // Extract direction and symbol from first line
-      const firstLine = lines[0].toUpperCase();
+      const firstLine = text.split("\n")[0];
       const direction = this.extractDirection(firstLine);
       const symbol = this.extractSymbol(firstLine);
 
@@ -55,49 +54,48 @@ export class SignalParser {
         return { success: false, confidence: 0 };
       }
 
-      // Extract entry range
-      const entryLine = lines.find(l => 
-        l.toLowerCase().includes('entry') || 
-        l.toLowerCase().includes('buy') ||
-        l.toLowerCase().includes('sell')
+      // Find entry
+      const entryMatch = text.match(
+        /entry[\s:]*(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/i
       );
-      
-      const entryRange = entryLine ? this.extractEntryRange(entryLine) : null;
-      if (!entryRange) {
+      if (!entryMatch) {
         return { success: false, confidence: 0 };
       }
+      const entryRange = {
+        min: Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+        max: Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+      };
 
-      // Extract stop loss
-      const slLine = lines.find(l => 
-        l.toLowerCase().includes('sl') || 
-        l.toLowerCase().includes('stop')
-      );
-      
-      const stopLoss = slLine ? this.extractPrice(slLine) : null;
-      if (!stopLoss) {
+      // Find SL
+      const slMatch = text.match(/sl[\s:]*(\d+\.?\d*)/i);
+      if (!slMatch) {
         return { success: false, confidence: 0 };
       }
+      const stopLoss = parseFloat(slMatch[1]);
 
-      // Extract take profits
-      const takeProfits = this.extractTakeProfits(lines);
+      // Find TPs
+      const takeProfits = this.extractTakeProfits(text);
+
+      // If no TPs found, this might have "TP OPEN"
       if (takeProfits.length === 0) {
-        return { success: false, confidence: 0 };
+        // Signal with open TP - we'll add our own
+        return this.returnSignalWithDefault(
+          symbol,
+          direction,
+          entryRange,
+          stopLoss,
+          85 // High confidence because we found all required fields
+        );
       }
 
-      // Validate the signal
       const isValid = this.validateSignal(
         direction,
         entryRange,
         stopLoss,
         takeProfits
       );
-
       if (!isValid) {
-        return { 
-          success: false, 
-          error: 'Signal validation failed',
-          confidence: 0 
-        };
+        return { success: false, confidence: 0 };
       }
 
       return {
@@ -112,48 +110,51 @@ export class SignalParser {
         },
         confidence: 95,
       };
-    } catch (error) {
+    } catch (e) {
       return { success: false, confidence: 0 };
     }
   }
 
   /**
-   * Parse inline format:
-   * BUY XAUUSD @ 2000-1995 | SL: 1990 | TP1: 2010 | TP2: 2020 | TP3: 2030
+   * Format 2: BUY EURUSD @ 1.0850-1.0845 | SL: 1.0840 | TP1: 1.0860
    */
-  private parseInlineFormat(text: string): ParserResult {
+  private parseFormatTwo(text: string): ParserResult {
     try {
-      const textUpper = text.toUpperCase();
-      
-      const direction = this.extractDirection(textUpper);
-      const symbol = this.extractSymbol(textUpper);
+      const direction = this.extractDirection(text);
+      const symbol = this.extractSymbol(text);
 
       if (!direction || !symbol) {
         return { success: false, confidence: 0 };
       }
 
-      // Split by pipe or comma
-      const parts = text.split(/[|,]/).map(p => p.trim());
-      
-      const entryPart = parts.find(p => 
-        p.includes('@') || 
-        p.toLowerCase().includes('entry')
-      );
-      
-      const entryRange = entryPart ? this.extractEntryRange(entryPart) : null;
-      if (!entryRange) {
+      // Find @ entry
+      const entryMatch = text.match(/@\s*(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/i);
+      if (!entryMatch) {
         return { success: false, confidence: 0 };
       }
+      const entryRange = {
+        min: Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+        max: Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+      };
 
-      const slPart = parts.find(p => p.toLowerCase().includes('sl'));
-      const stopLoss = slPart ? this.extractPrice(slPart) : null;
-      if (!stopLoss) {
+      // Find SL
+      const slMatch = text.match(/sl[\s:]*(\d+\.?\d*)/i);
+      if (!slMatch) {
         return { success: false, confidence: 0 };
       }
+      const stopLoss = parseFloat(slMatch[1]);
 
-      const takeProfits = this.extractTakeProfits(parts);
+      // Find TPs
+      const takeProfits = this.extractTakeProfits(text);
+
       if (takeProfits.length === 0) {
-        return { success: false, confidence: 0 };
+        return this.returnSignalWithDefault(
+          symbol,
+          direction,
+          entryRange,
+          stopLoss,
+          80
+        );
       }
 
       const isValid = this.validateSignal(
@@ -162,13 +163,8 @@ export class SignalParser {
         stopLoss,
         takeProfits
       );
-
       if (!isValid) {
-        return { 
-          success: false, 
-          error: 'Signal validation failed',
-          confidence: 0 
-        };
+        return { success: false, confidence: 0 };
       }
 
       return {
@@ -183,16 +179,15 @@ export class SignalParser {
         },
         confidence: 90,
       };
-    } catch (error) {
+    } catch (e) {
       return { success: false, confidence: 0 };
     }
   }
 
   /**
-   * Parse casual format:
-   * "Taking a buy on gold here at 2000, stop at 1990, targets 2010, 2020, 2030"
+   * Format 3: Gold Buy @4515-4511 Sl Break 4509 Tp Open
    */
-  private parseCasualFormat(text: string): ParserResult {
+  private parseFormatThree(text: string): ParserResult {
     try {
       const direction = this.extractDirection(text);
       const symbol = this.extractSymbol(text);
@@ -201,42 +196,36 @@ export class SignalParser {
         return { success: false, confidence: 0 };
       }
 
-      // Look for entry price after "at" or "@"
-      const entryMatch = text.match(/(?:at|@)\s*([\d.]+)(?:\s*-\s*([\d.]+))?/i);
+      // Find @ entry
+      const entryMatch = text.match(/@\s*(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/i);
       if (!entryMatch) {
         return { success: false, confidence: 0 };
       }
-
       const entryRange = {
-        min: parseFloat(entryMatch[2] || entryMatch[1]),
-        max: parseFloat(entryMatch[1]),
+        min: Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+        max: Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
       };
 
-      // Look for stop loss
-      const slMatch = text.match(/(?:stop|sl)(?:\s+at)?\s*([\d.]+)/i);
+      // Find SL - might say "Break" or other keywords
+      const slMatch =
+        text.match(/sl[\s:]*break[\s:]*(\d+\.?\d*)/i) ||
+        text.match(/sl[\s:]*(\d+\.?\d*)/i);
       if (!slMatch) {
         return { success: false, confidence: 0 };
       }
-      const stopLoss = parseFloat(slMatch[1]);
+      const stopLoss = parseFloat(slMatch[slMatch.length - 1]);
 
-      // Look for targets
-      const targetsMatch = text.match(/(?:target|tp|take profit)s?\s*([\d.,\s]+)/i);
-      if (!targetsMatch) {
-        return { success: false, confidence: 0 };
-      }
+      // Find TPs or check for "OPEN"
+      const takeProfits = this.extractTakeProfits(text);
 
-      const targetPrices = targetsMatch[1]
-        .split(/[,\s]+/)
-        .filter(p => p && !isNaN(parseFloat(p)))
-        .map(p => parseFloat(p));
-
-      const takeProfits = targetPrices.map((price, index) => ({
-        level: index + 1,
-        price,
-      }));
-
-      if (takeProfits.length === 0) {
-        return { success: false, confidence: 0 };
+      if (takeProfits.length === 0 || text.match(/tp[\s:]*open/i)) {
+        return this.returnSignalWithDefault(
+          symbol,
+          direction,
+          entryRange,
+          stopLoss,
+          85
+        );
       }
 
       const isValid = this.validateSignal(
@@ -245,13 +234,8 @@ export class SignalParser {
         stopLoss,
         takeProfits
       );
-
       if (!isValid) {
-        return { 
-          success: false, 
-          error: 'Signal validation failed',
-          confidence: 0 
-        };
+        return { success: false, confidence: 0 };
       }
 
       return {
@@ -264,214 +248,260 @@ export class SignalParser {
           stopLoss,
           takeProfits,
         },
-        confidence: 70,
+        confidence: 85,
       };
-    } catch (error) {
+    } catch (e) {
       return { success: false, confidence: 0 };
     }
   }
 
   /**
-   * Extract trade direction from text
+   * Format 4: XAUUSD BUY SL: 4187.34 (missing entry and TP)
    */
-  private extractDirection(text: string): TradeDirection | null {
-    const normalized = text.toUpperCase();
-    
-    if (normalized.includes('BUY') || normalized.includes('LONG')) {
-      return TradeDirection.BUY;
+  private parseFormatFour(text: string): ParserResult {
+    try {
+      const direction = this.extractDirection(text);
+      const symbol = this.extractSymbol(text);
+
+      if (!direction || !symbol) {
+        return { success: false, confidence: 0 };
+      }
+
+      // Try to find entry - if not found, it's incomplete
+      const entryMatch = text.match(
+        /(?:@|entry|zone)[\s:]*(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/i
+      );
+      if (!entryMatch) {
+        // Incomplete signal - skip
+        return { success: false, confidence: 0 };
+      }
+
+      const entryRange = {
+        min: Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+        max: Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+      };
+
+      // Find SL
+      const slMatch = text.match(/sl[\s:]*(\d+\.?\d*)/i);
+      if (!slMatch) {
+        return { success: false, confidence: 0 };
+      }
+      const stopLoss = parseFloat(slMatch[1]);
+
+      // Use default TPs
+      return this.returnSignalWithDefault(
+        symbol,
+        direction,
+        entryRange,
+        stopLoss,
+        75
+      );
+    } catch (e) {
+      return { success: false, confidence: 0 };
     }
-    
-    if (normalized.includes('SELL') || normalized.includes('SHORT')) {
-      return TradeDirection.SELL;
-    }
-    
-    return null;
   }
 
   /**
-   * Extract symbol from text
+   * Format 5: Gold Buy Now! 4212 - 4209 SL: 4206 TP1: 4214
    */
-  private extractSymbol(text: string): string | null {
-    const normalized = text.toUpperCase();
-    
-    // Common forex pairs
-    const forexPairs = [
-      'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD',
-      'EURJPY', 'GBPJPY', 'EURGBP', 'AUDJPY', 'EURAUD', 'EURCHF', 'AUDNZD',
+  private parseFormatFive(text: string): ParserResult {
+    try {
+      const direction = this.extractDirection(text);
+      const symbol = this.extractSymbol(text);
+
+      if (!direction || !symbol) {
+        return { success: false, confidence: 0 };
+      }
+
+      // Remove "now!", "!" etc
+      const cleaned = text.replace(/now\s*[!:]*/gi, "");
+
+      // Find entry - look for standalone numbers
+      const entryMatch = cleaned.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/);
+      if (!entryMatch) {
+        return { success: false, confidence: 0 };
+      }
+
+      const entryRange = {
+        min: Math.min(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+        max: Math.max(parseFloat(entryMatch[1]), parseFloat(entryMatch[2])),
+      };
+
+      // Find SL
+      const slMatch = cleaned.match(/sl[\s:]*(\d+\.?\d*)/i);
+      if (!slMatch) {
+        return { success: false, confidence: 0 };
+      }
+      const stopLoss = parseFloat(slMatch[1]);
+
+      // Find TPs
+      const takeProfits = this.extractTakeProfits(cleaned);
+
+      if (takeProfits.length === 0) {
+        return this.returnSignalWithDefault(
+          symbol,
+          direction,
+          entryRange,
+          stopLoss,
+          80
+        );
+      }
+
+      const isValid = this.validateSignal(
+        direction,
+        entryRange,
+        stopLoss,
+        takeProfits
+      );
+      if (!isValid) {
+        return { success: false, confidence: 0 };
+      }
+
+      return {
+        success: true,
+        signal: {
+          symbol,
+          direction,
+          entryMin: entryRange.min,
+          entryMax: entryRange.max,
+          stopLoss,
+          takeProfits,
+        },
+        confidence: 85,
+      };
+    } catch (e) {
+      return { success: false, confidence: 0 };
+    }
+  }
+
+  /**
+   * Return signal with default TPs when TP is open
+   */
+  private returnSignalWithDefault(
+    symbol: string,
+    direction: TradeDirection,
+    entryRange: { min: number; max: number },
+    stopLoss: number,
+    confidence: number
+  ): ParserResult {
+    // Calculate default TPs based on risk/reward
+    const riskPips = Math.abs(entryRange.max - stopLoss);
+    const tp1 =
+      direction === TradeDirection.BUY
+        ? entryRange.max + riskPips
+        : entryRange.min - riskPips;
+    const tp2 =
+      direction === TradeDirection.BUY
+        ? entryRange.max + riskPips * 1.5
+        : entryRange.min - riskPips * 1.5;
+    const tp3 =
+      direction === TradeDirection.BUY
+        ? entryRange.max + riskPips * 2
+        : entryRange.min - riskPips * 2;
+
+    const takeProfits = [
+      { level: 1, price: parseFloat(tp1.toFixed(5)) },
+      { level: 2, price: parseFloat(tp2.toFixed(5)) },
+      { level: 3, price: parseFloat(tp3.toFixed(5)) },
     ];
 
-    // Gold
-    if (normalized.includes('XAUUSD') || normalized.includes('GOLD')) {
-      return 'XAUUSD';
+    return {
+      success: true,
+      signal: {
+        symbol,
+        direction,
+        entryMin: entryRange.min,
+        entryMax: entryRange.max,
+        stopLoss,
+        takeProfits,
+      },
+      confidence,
+    };
+  }
+
+  private extractDirection(text: string): TradeDirection | null {
+    const upper = text.toUpperCase();
+    if (upper.includes("BUY") || upper.includes("LONG"))
+      return TradeDirection.BUY;
+    if (upper.includes("SELL") || upper.includes("SHORT"))
+      return TradeDirection.SELL;
+    return null;
+  }
+
+  private extractSymbol(text: string): string | null {
+    const upper = text.toUpperCase();
+
+    // Gold variations
+    if (upper.includes("GOLD") || upper.includes("XAUUSD")) return "XAUUSD";
+    if (upper.includes("SILVER") || upper.includes("XAGUSD")) return "XAGUSD";
+    if (upper.includes("CRUDE") || upper.includes("USOIL")) return "USOIL";
+    if (upper.includes("BITCOIN") || upper.includes("BTCUSD")) return "BTCUSD";
+    if (upper.includes("ETHEREUM") || upper.includes("ETHUSD")) return "ETHUSD";
+    if (upper.includes("US30") || upper.includes("DOW")) return "US30";
+    if (upper.includes("NAS100") || upper.includes("NASDAQ")) return "NAS100";
+    if (
+      upper.includes("SPX500") ||
+      upper.includes("SP500") ||
+      upper.includes("S&P")
+    )
+      return "SPX500";
+
+    const pairs = [
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "USDCHF",
+      "AUDUSD",
+      "USDCAD",
+      "NZDUSD",
+      "EURJPY",
+      "GBPJPY",
+      "EURGBP",
+      "AUDJPY",
+      "EURAUD",
+      "EURCHF",
+      "AUDNZD",
+    ];
+    for (const pair of pairs) {
+      if (upper.includes(pair)) return pair;
     }
 
-    // Silver
-    if (normalized.includes('XAGUSD') || normalized.includes('SILVER')) {
-      return 'XAGUSD';
-    }
-
-    // Oil
-    if (normalized.includes('USOIL') || normalized.includes('CRUDE')) {
-      return 'USOIL';
-    }
-
-    // Bitcoin
-    if (normalized.includes('BTCUSD') || normalized.includes('BITCOIN')) {
-      return 'BTCUSD';
-    }
-
-    // Ethereum
-    if (normalized.includes('ETHUSD') || normalized.includes('ETHEREUM')) {
-      return 'ETHUSD';
-    }
-
-    // Indices
-    if (normalized.includes('US30') || normalized.includes('DOW')) {
-      return 'US30';
-    }
-    if (normalized.includes('NAS100') || normalized.includes('NASDAQ')) {
-      return 'NAS100';
-    }
-    if (normalized.includes('SPX500') || normalized.includes('SP500') || normalized.includes('S&P')) {
-      return 'SPX500';
-    }
-
-    // Check forex pairs
-    for (const pair of forexPairs) {
-      if (normalized.includes(pair)) {
-        return pair;
-      }
-    }
-
-    // Try to extract any 6-character uppercase sequence (likely a forex pair)
     const pairMatch = text.match(/[A-Z]{6}/);
-    if (pairMatch) {
-      return pairMatch[0];
-    }
-
-    return null;
+    return pairMatch?.[0] || null;
   }
 
-  /**
-   * Extract entry price range from text
-   */
-  private extractEntryRange(text: string): { min: number; max: number } | null {
-    // Try range format: 2000-1995 or 2000 - 1995
-    const rangeMatch = text.match(/([\d.]+)\s*-\s*([\d.]+)/);
-    if (rangeMatch) {
-      const price1 = parseFloat(rangeMatch[1]);
-      const price2 = parseFloat(rangeMatch[2]);
-      return {
-        min: Math.min(price1, price2),
-        max: Math.max(price1, price2),
-      };
+  private extractTakeProfits(
+    text: string
+  ): Array<{ level: number; price: number }> {
+    const profits: Array<{ level: number; price: number }> = [];
+
+    // Match TP1: 4218, TP2: 4220, etc
+    const matches = text.matchAll(/tp\s*(\d+)[\s:]*(\d+\.?\d*)/gi);
+    for (const match of matches) {
+      profits.push({
+        level: parseInt(match[1]),
+        price: parseFloat(match[2]),
+      });
     }
 
-    // Try single price
-    const singleMatch = text.match(/[\d.]+/);
-    if (singleMatch) {
-      const price = parseFloat(singleMatch[0]);
-      // For single price, use same for min and max
-      return { min: price, max: price };
-    }
-
-    return null;
+    return profits.sort((a, b) => a.level - b.level);
   }
 
-  /**
-   * Extract single price from text
-   */
-  private extractPrice(text: string): number | null {
-    const match = text.match(/[\d.]+/);
-    return match ? parseFloat(match[0]) : null;
-  }
-
-  /**
-   * Extract take profit levels from text
-   */
-  private extractTakeProfits(textParts: string[]): Array<{ level: number; price: number }> {
-    const takeProfits: Array<{ level: number; price: number }> = [];
-    
-    for (const part of textParts) {
-      // Look for TP1, TP2, TP3, etc.
-      const tpMatch = part.match(/tp(\d+)[\s:]*(\d+\.?\d*)/i);
-      if (tpMatch) {
-        takeProfits.push({
-          level: parseInt(tpMatch[1]),
-          price: parseFloat(tpMatch[2]),
-        });
-        continue;
-      }
-
-      // Look for "target 1", "target 2", etc.
-      const targetMatch = part.match(/target\s*(\d+)[\s:]*(\d+\.?\d*)/i);
-      if (targetMatch) {
-        takeProfits.push({
-          level: parseInt(targetMatch[1]),
-          price: parseFloat(targetMatch[2]),
-        });
-      }
-    }
-
-    // Sort by level
-    return takeProfits.sort((a, b) => a.level - b.level);
-  }
-
-  /**
-   * Validate that the signal makes logical sense
-   */
   private validateSignal(
     direction: TradeDirection,
     entryRange: { min: number; max: number },
     stopLoss: number,
     takeProfits: Array<{ level: number; price: number }>
   ): boolean {
-    // Check entry range is valid
-    if (entryRange.min > entryRange.max) {
-      return false;
-    }
-
-    // Check all prices are positive
-    if (entryRange.min <= 0 || stopLoss <= 0) {
-      return false;
-    }
-
-    if (takeProfits.some(tp => tp.price <= 0)) {
-      return false;
-    }
+    if (entryRange.min <= 0 || stopLoss <= 0) return false;
+    if (takeProfits.some((tp) => tp.price <= 0)) return false;
 
     if (direction === TradeDirection.BUY) {
-      // For BUY: SL should be below entry, TPs should be above entry
-      if (stopLoss >= entryRange.min) {
-        return false;
-      }
-
-      if (takeProfits.some(tp => tp.price <= entryRange.max)) {
-        return false;
-      }
-
-      // TPs should be in ascending order
-      for (let i = 1; i < takeProfits.length; i++) {
-        if (takeProfits[i].price <= takeProfits[i - 1].price) {
-          return false;
-        }
-      }
+      if (stopLoss >= entryRange.min) return false;
+      if (takeProfits.some((tp) => tp.price <= entryRange.max)) return false;
     } else {
-      // For SELL: SL should be above entry, TPs should be below entry
-      if (stopLoss <= entryRange.max) {
-        return false;
-      }
-
-      if (takeProfits.some(tp => tp.price >= entryRange.min)) {
-        return false;
-      }
-
-      // TPs should be in descending order
-      for (let i = 1; i < takeProfits.length; i++) {
-        if (takeProfits[i].price >= takeProfits[i - 1].price) {
-          return false;
-        }
-      }
+      if (stopLoss <= entryRange.max) return false;
+      if (takeProfits.some((tp) => tp.price >= entryRange.min)) return false;
     }
 
     return true;
