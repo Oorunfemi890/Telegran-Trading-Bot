@@ -1,4 +1,4 @@
-// FILE: src/index.ts (COMPLETE WITH ALL WORKERS)
+// FILE: src/index.ts
 // =============================================
 import "reflect-metadata";
 import { config } from "dotenv";
@@ -9,8 +9,16 @@ import compression from "compression";
 import { initializeDatabase, closeDatabase } from "./config/database.config";
 import { initializeRedis, closeRedis, getRedisClient } from "./config/redis.config";
 import { TelegramListenerService } from "./services/telegram.listener";
+
+// Workers
 import { startSignalWorker, stopSignalWorker } from "./workers/signal.worker";
+import { startExecutionWorker, stopExecutionWorker } from "./workers/execution.worker";
+import { startMonitoringWorker, stopMonitoringWorker } from "./workers/monitoring.worker";
+
+// Job Schedulers
 import { startSignalExpirationJob, stopSignalExpirationJob } from "./jobs/signal-expiration.job";
+import { startMonitoringScheduler, stopMonitoringScheduler } from "./jobs/monitoring.job";
+import { startDailyReportScheduler, stopDailyReportScheduler } from "./jobs/daily-report.job";
 
 config();
 
@@ -151,15 +159,35 @@ async function startServer() {
 
     // Start background workers (only if Redis is available)
     if (getRedisClient()) {
-      console.log("⚙️  Starting background workers...");
+      console.log("\n⚙️  Starting background workers...");
+      
+      // Signal processing worker
       startSignalWorker();
       console.log("✅ Signal worker started");
+      
+      // PHASE 8: Trade execution worker
+      startExecutionWorker();
+      console.log("✅ Execution worker started");
+      
+      // PHASE 9: Position monitoring worker
+      startMonitoringWorker();
+      console.log("✅ Monitoring worker started");
     }
 
     // Start scheduled jobs
-    console.log("⏰ Starting scheduled jobs...");
-    startSignalExpirationJob(5); // Check every 5 minutes
-    console.log("✅ Signal expiration job started\n");
+    console.log("\n⏰ Starting scheduled jobs...");
+    
+    // Signal expiration job (every 5 minutes)
+    startSignalExpirationJob(5);
+    console.log("✅ Signal expiration job started (5 min intervals)");
+    
+    // PHASE 9: Position monitoring job (every 5 seconds)
+    startMonitoringScheduler(5);
+    console.log("✅ Position monitoring job started (5 sec intervals)");
+    
+    // PHASE 10: Daily report job (midnight)
+    startDailyReportScheduler(0, 0);
+    console.log("✅ Daily report job started (midnight)\n");
 
     // Start Telegram Listener
     if (process.env.TELEGRAM_ENABLED === 'true') {
@@ -184,8 +212,14 @@ async function startServer() {
       console.log(`   ✅ Database: Connected`);
       console.log(`   ${getRedisClient() ? '✅' : '⚠️ '} Redis: ${getRedisClient() ? 'Connected' : 'Disabled'}`);
       console.log(`   ${telegramListener?.isActive() ? '✅' : '⚠️ '} Telegram: ${telegramListener?.isActive() ? 'Listening' : 'Disabled'}`);
-      console.log(`   ✅ Workers: ${getRedisClient() ? 'Running' : 'Disabled'}`);
-      console.log(`   ✅ Jobs: Running`);
+      console.log(`   ✅ Workers: ${getRedisClient() ? 'Running (3)' : 'Disabled'}`);
+      console.log(`   ✅ Jobs: Running (3)`);
+      console.log("==========================================");
+      console.log("🎯 PHASES IMPLEMENTED:");
+      console.log("   ✅ Phase 1-7: Foundation");
+      console.log("   ✅ Phase 8: Trade Execution");
+      console.log("   ✅ Phase 9: Position Monitoring");
+      console.log("   ✅ Phase 10: Daily Reports");
       console.log("==========================================\n");
       
       if (telegramListener?.isActive()) {
@@ -209,11 +243,15 @@ async function startServer() {
         if (getRedisClient()) {
           console.log("⏹️  Stopping workers...");
           await stopSignalWorker();
+          await stopExecutionWorker();
+          await stopMonitoringWorker();
         }
 
         // Stop jobs
         console.log("⏹️  Stopping scheduled jobs...");
         stopSignalExpirationJob();
+        stopMonitoringScheduler();
+        stopDailyReportScheduler();
 
         // Close connections
         console.log("⏹️  Closing connections...");
