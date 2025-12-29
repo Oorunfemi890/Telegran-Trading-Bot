@@ -8,49 +8,49 @@ import {
   OneToMany,
   JoinColumn,
   Index,
-} from 'typeorm';
-import { InvitationCodeStatus, SubscriptionTier } from '../../types';
-import { User } from './User.entity';
+} from "typeorm";
+import { InvitationCodeStatus, SubscriptionTier } from "../../types";
+import { User } from "./User.entity";
 
-@Entity('invitation_codes')
-@Index(['code'], { unique: true })
+@Entity("invitation_codes")
+@Index(["code"], { unique: true })
 export class InvitationCode {
-  @PrimaryGeneratedColumn('uuid')
+  @PrimaryGeneratedColumn("uuid")
   id: string;
 
-  @Column({ type: 'varchar', length: 20, unique: true })
+  @Column({ type: "varchar", length: 20, unique: true })
   code: string;
 
   @Column({
-    type: 'enum',
+    type: "enum",
     enum: SubscriptionTier,
     default: SubscriptionTier.STARTER,
   })
   tier: SubscriptionTier;
 
-  @Column({ type: 'decimal', precision: 10, scale: 2, default: 0 })
+  @Column({ type: "decimal", precision: 10, scale: 2, default: 0 })
   price: number;
 
-  @Column({ type: 'int', default: 1 })
+  @Column({ type: "int", default: 1 })
   maxUses: number;
 
-  @Column({ type: 'int', default: 0 })
+  @Column({ type: "int", default: 0 })
   currentUses: number;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: "timestamp", nullable: true })
   expiresAt: Date | null;
 
   @Column({
-    type: 'enum',
+    type: "enum",
     enum: InvitationCodeStatus,
     default: InvitationCodeStatus.ACTIVE,
   })
   status: InvitationCodeStatus;
 
-  @Column({ type: 'varchar', length: 255, nullable: true })
+  @Column({ type: "varchar", length: 255, nullable: true })
   customerEmail: string | null;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: "text", nullable: true })
   notes: string | null;
 
   @CreateDateColumn()
@@ -59,7 +59,7 @@ export class InvitationCode {
   @UpdateDateColumn()
   updatedAt: Date;
 
-  @Column({ type: 'timestamp', nullable: true })
+  @Column({ type: "timestamp", nullable: true })
   usedAt: Date | null;
 
   // =============================================
@@ -67,10 +67,10 @@ export class InvitationCode {
   // =============================================
 
   @ManyToOne(() => User, { nullable: true })
-  @JoinColumn({ name: 'generated_by_id' })
+  @JoinColumn({ name: "generated_by_id" })
   generatedBy: User | null;
 
-  @Column({ type: 'uuid', nullable: true })
+  @Column({ type: "uuid", nullable: true })
   generated_by_id: string | null;
 
   @OneToMany(() => User, (user) => user.invitationCode)
@@ -106,12 +106,14 @@ export class InvitationCode {
     }
 
     // Check if email matches
-    return this.customerEmail.toLowerCase() === email.toLowerCase() && this.isValid();
+    return (
+      this.customerEmail.toLowerCase() === email.toLowerCase() && this.isValid()
+    );
   }
 
   markAsUsed(): void {
     this.currentUses += 1;
-    
+
     if (this.currentUses >= this.maxUses) {
       this.status = InvitationCodeStatus.USED;
       this.usedAt = new Date();
@@ -128,11 +130,11 @@ export class InvitationCode {
 
   getDaysUntilExpiry(): number | null {
     if (!this.expiresAt) return null;
-    
+
     const now = new Date();
     const diffTime = this.expiresAt.getTime() - now.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
+
     return diffDays;
   }
 
