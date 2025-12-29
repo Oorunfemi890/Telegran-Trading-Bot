@@ -1,6 +1,6 @@
 // FILE: src/services/report.generator.ts
 // =============================================
-// PHASE 10: DAILY REPORT GENERATION SERVICE
+// PHASE 10: DAILY REPORT GENERATION SERVICE (UPDATED)
 // =============================================
 
 import AppDataSource from "../config/database.config";
@@ -11,6 +11,7 @@ import { Signal } from "../database/entities/Signal.entity";
 import { TradeStatus } from "../types";
 import { Between } from "typeorm";
 import { EmailService } from "./email.service";
+import { generateDailyReportEmail, DailyReportData } from "../templates/daily-report.template";
 
 export interface ReportStatistics {
   tradingStats: {
@@ -133,7 +134,7 @@ export class ReportGeneratorService {
     // Generate recommendations
     const recommendations = this.generateRecommendations(stats, todaysTrades);
 
-    // Save report
+    // Save report to database
     const report = this.reportRepo.create({
       user_id: userId,
       reportDate: today,
@@ -147,11 +148,10 @@ export class ReportGeneratorService {
     });
 
     await this.reportRepo.save(report);
-
     console.log(`   ✅ Report saved: ${report.id}`);
 
-    // Send email report (TODO: Implement email template)
-    // await this.sendDailyReportEmail(user, stats, insights, recommendations);
+    // ✅ SEND EMAIL WITH TEMPLATE
+    await this.sendDailyReportEmail(user, stats, insights, recommendations, today);
   }
 
   /**
@@ -168,19 +168,23 @@ export class ReportGeneratorService {
     );
     const netProfit = grossProfit - grossLoss;
 
+    // Calculate account balance (TODO: Get from actual trading account)
+    const startBalance = 10000;
+    const endBalance = startBalance + netProfit;
+
     return {
       tradingStats: {
         totalTrades: trades.length,
         winningTrades: winningTrades.length,
         losingTrades: losingTrades.length,
         breakevenTrades: breakevenTrades.length,
-        winRate: (winningTrades.length / trades.length) * 100,
+        winRate: trades.length > 0 ? (winningTrades.length / trades.length) * 100 : 0,
       },
       financialStats: {
-        startBalance: 10000, // TODO: Get from account
-        endBalance: 10000 + netProfit,
+        startBalance,
+        endBalance,
         netChange: netProfit,
-        percentageChange: (netProfit / 10000) * 100,
+        percentageChange: (netProfit / startBalance) * 100,
         grossProfit,
         grossLoss,
         netProfit,
@@ -195,16 +199,15 @@ export class ReportGeneratorService {
       },
       performanceMetrics: {
         profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit,
-        expectancy: netProfit / trades.length,
+        expectancy: trades.length > 0 ? netProfit / trades.length : 0,
         riskRewardRatio:
-          losingTrades.length > 0
-            ? grossProfit /
-              winningTrades.length /
-              (grossLoss / losingTrades.length)
+          losingTrades.length > 0 && winningTrades.length > 0
+            ? (grossProfit / winningTrades.length) / (grossLoss / losingTrades.length)
             : 0,
         returnOnRisk:
-          (netProfit / trades.reduce((sum, t) => sum + t.totalRiskAmount, 0)) *
-          100,
+          trades.length > 0
+            ? (netProfit / trades.reduce((sum, t) => sum + t.totalRiskAmount, 0)) * 100
+            : 0,
       },
       riskMetrics: {
         breakevenActivations: trades.filter((t) => t.breakevenActivated).length,
@@ -220,7 +223,6 @@ export class ReportGeneratorService {
    * Calculate how much breakeven saved
    */
   private calculateBreakevenSavings(trades: Trade[]): number {
-    // Count trades where breakeven prevented loss
     return trades.filter(
       (t) =>
         t.breakevenActivated &&
@@ -330,8 +332,10 @@ export class ReportGeneratorService {
 
     // TP achievements
     const tp1Rate =
-      (stats.riskMetrics.tp1Achievements / stats.tradingStats.totalTrades) *
-      100;
+      stats.tradingStats.totalTrades > 0
+        ? (stats.riskMetrics.tp1Achievements / stats.tradingStats.totalTrades) * 100
+        : 0;
+    
     if (tp1Rate < 50) {
       recommendations.push(
         "Consider tighter TP1 levels to lock in profits more frequently"
@@ -342,15 +346,50 @@ export class ReportGeneratorService {
   }
 
   /**
-   * Send daily report email (TODO: Create template)
+   * ✅ SEND DAILY REPORT EMAIL WITH TEMPLATE
    */
   private async sendDailyReportEmail(
     user: User,
     stats: ReportStatistics,
     insights: string[],
-    recommendations: string[]
+    recommendations: string[],
+    reportDate: Date
   ): Promise<void> {
-    // TODO: Implement email template
-    console.log("   📧 Email report not yet implemented");
+    try {
+      // Prepare data for email template
+      const emailData: DailyReportData = {
+        userName: user.fullName,
+        reportDate: reportDate.toLocaleDateString('en-US', { 
+          weekday: 'long', 
+          year: 'numeric', 
+          month: 'long', 
+          day: 'numeric' 
+        }),
+        tradingStats: stats.tradingStats,
+        financialStats: stats.financialStats,
+        performanceMetrics: stats.performanceMetrics,
+        riskMetrics: stats.riskMetrics,
+        insights,
+        recommendations,
+      };
+
+      // Generate email using template
+      const { subject, html, text } = generateDailyReportEmail(emailData);
+
+      // Queue email for delivery
+      await this.emailService['queueEmail']({
+        to: user.email,
+        subject,
+        html,
+        text,
+        userId: user.id,
+        emailType: 'daily_report' as any,
+      });
+
+      console.log(`   📧 Daily report email queued for ${user.email}`);
+    } catch (error) {
+      console.error("   ⚠️  Failed to send daily report email:", error);
+      // Don't throw - report was saved, email is optional
+    }
   }
 }
