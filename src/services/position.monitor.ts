@@ -37,11 +37,15 @@ export class PositionMonitorService {
       relations: ["positions", "user"],
     });
 
-    console.log(`\n🔍 Monitoring ${activeTrades.length} active trade(s)...`);
+    // Only log when there are actual trades to monitor
+    if (activeTrades.length > 0) {
+      console.log(`\n🔍 Monitoring ${activeTrades.length} active trade(s)...`);
 
-    for (const trade of activeTrades) {
-      await this.monitorTrade(trade.id);
+      for (const trade of activeTrades) {
+        await this.monitorTrade(trade.id);
+      }
     }
+    // Silent when no trades (don't spam logs)
   }
 
   /**

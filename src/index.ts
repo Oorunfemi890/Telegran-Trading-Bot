@@ -182,8 +182,8 @@ async function startServer() {
     console.log("✅ Signal expiration job started (5 min intervals)");
     
     // PHASE 9: Position monitoring job (every 5 seconds)
-    startMonitoringScheduler(5);
-    console.log("✅ Position monitoring job started (5 sec intervals)");
+    // startMonitoringScheduler(5);
+    // console.log("✅ Position monitoring job started (5 sec intervals)");
     
     // PHASE 10: Daily report job (midnight)
     startDailyReportScheduler(0, 0);
