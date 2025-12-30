@@ -1,4 +1,4 @@
-// FILE: src/index.ts
+// FILE: src/index.ts - UPDATED WITH PHASE 11 & 12
 // =============================================
 import "reflect-metadata";
 import { config } from "dotenv";
@@ -6,24 +6,51 @@ import express, { Application, Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
+import { createServer } from "http";
 import { initializeDatabase, closeDatabase } from "./config/database.config";
-import { initializeRedis, closeRedis, getRedisClient } from "./config/redis.config";
+import {
+  initializeRedis,
+  closeRedis,
+  getRedisClient,
+} from "./config/redis.config";
 import { TelegramListenerService } from "./services/telegram.listener";
+import {
+  initializeWebSocketServer,
+  getWebSocketServer,
+} from "./websocket/socket.server";
 
 // Workers
 import { startSignalWorker, stopSignalWorker } from "./workers/signal.worker";
-import { startExecutionWorker, stopExecutionWorker } from "./workers/execution.worker";
-import { startMonitoringWorker, stopMonitoringWorker } from "./workers/monitoring.worker";
+import {
+  startExecutionWorker,
+  stopExecutionWorker,
+} from "./workers/execution.worker";
+import {
+  startMonitoringWorker,
+  stopMonitoringWorker,
+} from "./workers/monitoring.worker";
 
 // Job Schedulers
-import { startSignalExpirationJob, stopSignalExpirationJob } from "./jobs/signal-expiration.job";
-import { startMonitoringScheduler, stopMonitoringScheduler } from "./jobs/monitoring.job";
-import { startDailyReportScheduler, stopDailyReportScheduler } from "./jobs/daily-report.job";
+import {
+  startSignalExpirationJob,
+  stopSignalExpirationJob,
+} from "./jobs/signal-expiration.job";
+import {
+  startMonitoringScheduler,
+  stopMonitoringScheduler,
+} from "./jobs/monitoring.job";
+import {
+  startDailyReportScheduler,
+  stopDailyReportScheduler,
+} from "./jobs/daily-report.job";
 
 config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 3000;
+
+// Create HTTP server for both Express and WebSocket
+const httpServer = createServer(app);
 
 // Service instances
 let telegramListener: TelegramListenerService | null = null;
@@ -52,6 +79,8 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // =============================================
 
 app.get("/health", (_req: Request, res: Response) => {
+  const wsServer = getWebSocketServer();
+
   res.status(200).json({
     success: true,
     message: "Trading Bot API is running",
@@ -61,33 +90,8 @@ app.get("/health", (_req: Request, res: Response) => {
     services: {
       telegram: telegramListener?.isActive() || false,
       redis: getRedisClient() !== null,
-    },
-  });
-});
-
-app.get("/api/health", (_req: Request, res: Response) => {
-  res.status(200).json({
-    success: true,
-    service: "Telegram Trading Bot",
-    status: "operational",
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    services: {
-      telegram: {
-        listening: telegramListener?.isActive() || false,
-        enabled: process.env.TELEGRAM_ENABLED === 'true',
-      },
-      redis: {
-        connected: getRedisClient() !== null,
-      },
-      database: {
-        connected: true,
-      },
-    },
-    memory: {
-      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
-      external: Math.round(process.memoryUsage().external / 1024 / 1024),
+      websocket: wsServer !== null,
+      connectedClients: wsServer?.getConnectedUsersCount() || 0,
     },
   });
 });
@@ -97,6 +101,13 @@ app.get("/api/health", (_req: Request, res: Response) => {
 // =============================================
 import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
+import tradeRoutes from "./routes/trade.routes";
+
+// Admin routes
+import adminInvitationRoutes from "./routes/admin/invitation.routes";
+import adminUsersRoutes from "./routes/admin/users.routes";
+import adminSystemRoutes from "./routes/admin/system.routes";
+import { analyticsRouter } from "./routes/admin/analytics.routes";
 
 app.get("/api/v1", (_req: Request, res: Response) => {
   res.json({
@@ -108,13 +119,26 @@ app.get("/api/v1", (_req: Request, res: Response) => {
       users: "/api/v1/users",
       trades: "/api/v1/trades",
       signals: "/api/v1/signals",
-      admin: "/api/v1/admin",
+      admin: {
+        invitations: "/api/v1/admin/invitations",
+        users: "/api/v1/admin/users",
+        system: "/api/v1/admin/system",
+        analytics: "/api/v1/admin/analytics",
+      },
+      websocket: "/socket.io",
     },
   });
 });
 
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/channels", channelRoutes);
+app.use("/api/v1/trades", tradeRoutes);
+
+// Admin routes
+app.use("/api/v1/admin/invitations", adminInvitationRoutes);
+app.use("/api/v1/admin/users", adminUsersRoutes);
+app.use("/api/v1/admin/system", adminSystemRoutes);
+app.use("/api/v1/admin/analytics", analyticsRouter);
 
 // =============================================
 // ERROR HANDLING
@@ -157,40 +181,36 @@ async function startServer() {
     console.log("🔴 Connecting to Redis...");
     await initializeRedis();
 
+    // PHASE 12: Initialize WebSocket Server
+    console.log("\n🔌 Initializing WebSocket server...");
+    initializeWebSocketServer(httpServer);
+    console.log("✅ WebSocket server initialized\n");
+
     // Start background workers (only if Redis is available)
     if (getRedisClient()) {
-      console.log("\n⚙️  Starting background workers...");
-      
-      // Signal processing worker
+      console.log("⚙️  Starting background workers...");
+
       startSignalWorker();
       console.log("✅ Signal worker started");
-      
-      // PHASE 8: Trade execution worker
+
       startExecutionWorker();
       console.log("✅ Execution worker started");
-      
-      // PHASE 9: Position monitoring worker
+
       startMonitoringWorker();
       console.log("✅ Monitoring worker started");
     }
 
     // Start scheduled jobs
     console.log("\n⏰ Starting scheduled jobs...");
-    
-    // Signal expiration job (every 5 minutes)
+
     startSignalExpirationJob(5);
     console.log("✅ Signal expiration job started (5 min intervals)");
-    
-    // PHASE 9: Position monitoring job (every 5 seconds)
-    // startMonitoringScheduler(5);
-    // console.log("✅ Position monitoring job started (5 sec intervals)");
-    
-    // PHASE 10: Daily report job (midnight)
+
     startDailyReportScheduler(0, 0);
     console.log("✅ Daily report job started (midnight)\n");
 
     // Start Telegram Listener
-    if (process.env.TELEGRAM_ENABLED === 'true') {
+    if (process.env.TELEGRAM_ENABLED === "true") {
       console.log("📡 Starting Telegram listener...");
       telegramListener = new TelegramListenerService();
       await telegramListener.start();
@@ -198,8 +218,10 @@ async function startServer() {
       console.log("⚠️  Telegram listener disabled in configuration\n");
     }
 
-    // Start HTTP server
-    app.listen(PORT, () => {
+    // Start HTTP server (includes WebSocket)
+    httpServer.listen(PORT, () => {
+      const wsServer = getWebSocketServer();
+
       console.log("==========================================");
       console.log("✅ TRADING BOT SERVER RUNNING");
       console.log("==========================================");
@@ -207,21 +229,30 @@ async function startServer() {
       console.log(`🔗 Server URL: http://localhost:${PORT}`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
       console.log(`📡 API Base: http://localhost:${PORT}/api/v1`);
+      console.log(`🔌 WebSocket: ws://localhost:${PORT}/socket.io`);
       console.log("==========================================");
       console.log("📋 SYSTEM STATUS:");
       console.log(`   ✅ Database: Connected`);
-      console.log(`   ${getRedisClient() ? '✅' : '⚠️ '} Redis: ${getRedisClient() ? 'Connected' : 'Disabled'}`);
-      console.log(`   ${telegramListener?.isActive() ? '✅' : '⚠️ '} Telegram: ${telegramListener?.isActive() ? 'Listening' : 'Disabled'}`);
-      console.log(`   ✅ Workers: ${getRedisClient() ? 'Running (3)' : 'Disabled'}`);
-      console.log(`   ✅ Jobs: Running (3)`);
+      console.log(
+        `   ${getRedisClient() ? "✅" : "⚠️ "} Redis: ${getRedisClient() ? "Connected" : "Disabled"}`
+      );
+      console.log(
+        `   ${telegramListener?.isActive() ? "✅" : "⚠️ "} Telegram: ${telegramListener?.isActive() ? "Listening" : "Disabled"}`
+      );
+      console.log(
+        `   ✅ WebSocket: Active (${wsServer?.getConnectedUsersCount() || 0} clients)`
+      );
+      console.log(
+        `   ✅ Workers: ${getRedisClient() ? "Running (3)" : "Disabled"}`
+      );
+      console.log(`   ✅ Jobs: Running (2)`);
       console.log("==========================================");
       console.log("🎯 PHASES IMPLEMENTED:");
-      console.log("   ✅ Phase 1-7: Foundation");
-      console.log("   ✅ Phase 8: Trade Execution");
-      console.log("   ✅ Phase 9: Position Monitoring");
-      console.log("   ✅ Phase 10: Daily Reports");
+      console.log("   ✅ Phase 1-10: Core System");
+      console.log("   ✅ Phase 11: Admin Dashboard Backend");
+      console.log("   ✅ Phase 12: WebSocket Real-time");
       console.log("==========================================\n");
-      
+
       if (telegramListener?.isActive()) {
         console.log("🎧 Bot is now listening for signals!");
         console.log("💡 Post a signal in a monitored channel to test\n");
@@ -233,6 +264,9 @@ async function startServer() {
       console.log(`\n⚠️  Received ${signal}, shutting down gracefully...`);
 
       try {
+        // Stop accepting new connections
+        httpServer.close();
+
         // Stop Telegram listener
         if (telegramListener) {
           console.log("⏹️  Stopping Telegram listener...");
@@ -257,7 +291,7 @@ async function startServer() {
         console.log("⏹️  Closing connections...");
         await closeRedis();
         await closeDatabase();
-        
+
         console.log("✅ All services stopped gracefully");
         process.exit(0);
       } catch (error) {
@@ -268,7 +302,6 @@ async function startServer() {
 
     process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-    
   } catch (error) {
     console.error("❌ Failed to start server:", error);
     process.exit(1);
