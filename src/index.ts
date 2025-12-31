@@ -43,6 +43,10 @@ import {
   startDailyReportScheduler,
   stopDailyReportScheduler,
 } from "./jobs/daily-report.job";
+import {
+  startMetricsPushScheduler,
+  stopMetricsPushScheduler,
+} from "./jobs/metrics-push.job";
 
 config();
 
@@ -107,7 +111,7 @@ import tradeRoutes from "./routes/trade.routes";
 import adminInvitationRoutes from "./routes/admin/invitation.routes";
 import adminUsersRoutes from "./routes/admin/users.routes";
 import adminSystemRoutes from "./routes/admin/system.routes";
-import { analyticsRouter } from "./routes/admin/analytics.routes";
+import analyticsRouter from "./routes/admin/analytics.routes";
 
 app.get("/api/v1", (_req: Request, res: Response) => {
   res.json({
@@ -209,6 +213,9 @@ async function startServer() {
     startDailyReportScheduler(0, 0);
     console.log("✅ Daily report job started (midnight)\n");
 
+    startMetricsPushScheduler(30); // Push every 30 seconds
+    console.log("✅ Metrics push job started (30s intervals)\n");
+
     // Start Telegram Listener
     if (process.env.TELEGRAM_ENABLED === "true") {
       console.log("📡 Starting Telegram listener...");
@@ -264,16 +271,13 @@ async function startServer() {
       console.log(`\n⚠️  Received ${signal}, shutting down gracefully...`);
 
       try {
-        // Stop accepting new connections
         httpServer.close();
 
-        // Stop Telegram listener
         if (telegramListener) {
           console.log("⏹️  Stopping Telegram listener...");
           await telegramListener.stop();
         }
 
-        // Stop workers
         if (getRedisClient()) {
           console.log("⏹️  Stopping workers...");
           await stopSignalWorker();
@@ -281,13 +285,12 @@ async function startServer() {
           await stopMonitoringWorker();
         }
 
-        // Stop jobs
         console.log("⏹️  Stopping scheduled jobs...");
         stopSignalExpirationJob();
         stopMonitoringScheduler();
         stopDailyReportScheduler();
+        stopMetricsPushScheduler(); // ✅ ADD THIS
 
-        // Close connections
         console.log("⏹️  Closing connections...");
         await closeRedis();
         await closeDatabase();
@@ -308,7 +311,6 @@ async function startServer() {
   }
 }
 
-// Start the server
 startServer();
 
 export default app;

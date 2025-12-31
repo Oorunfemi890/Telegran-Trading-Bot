@@ -4,7 +4,7 @@
 // =============================================
 
 import { Router } from 'express';
-import { AdminUsersController } from '../../controllers/admin/invitation.controller';
+import { AdminUsersController } from '../../controllers/admin/users.controller';
 import { authenticate } from '../../middleware/auth.middleware';
 import { requireAdmin, requireSuperAdmin } from '../../middleware/role.middleware';
 import { apiRateLimit } from '../../middleware/rateLimit.middleware';

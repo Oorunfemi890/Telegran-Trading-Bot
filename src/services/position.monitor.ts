@@ -1,6 +1,6 @@
-// FILE: src/services/position.monitor.ts
+// FILE: src/services/position.monitor.ts (UPDATED WITH WEBSOCKET)
 // =============================================
-// PHASE 9: POSITION MONITORING SERVICE
+// PHASE 9: POSITION MONITORING + PHASE 12: WEBSOCKET
 // =============================================
 
 import AppDataSource from "../config/database.config";
@@ -9,6 +9,7 @@ import { Position } from "../database/entities/Position.entity";
 import { User } from "../database/entities/User.entity";
 import { UserSettings } from "../database/entities/UserSettings.entity";
 import { EmailService } from "./email.service";
+import { getWebSocketServer } from "../websocket/socket.server"; // ✅ ADDED
 import {
   TradeStatus,
   PositionStatus,
@@ -37,7 +38,6 @@ export class PositionMonitorService {
       relations: ["positions", "user"],
     });
 
-    // Only log when there are actual trades to monitor
     if (activeTrades.length > 0) {
       console.log(`\n🔍 Monitoring ${activeTrades.length} active trade(s)...`);
 
@@ -45,7 +45,6 @@ export class PositionMonitorService {
         await this.monitorTrade(trade.id);
       }
     }
-    // Silent when no trades (don't spam logs)
   }
 
   /**
@@ -62,10 +61,8 @@ export class PositionMonitorService {
         return;
       }
 
-      // Get current market price
       const currentPrice = await this.getCurrentPrice(trade.symbol);
 
-      // Load settings
       const settings = await this.settingsRepo.findOne({
         where: { user_id: trade.user_id },
       });
@@ -80,7 +77,7 @@ export class PositionMonitorService {
       // Check take profits
       await this.checkTakeProfits(trade, currentPrice);
 
-      // Check stop loss (automated by MT, but we track it)
+      // Check stop loss
       await this.checkStopLoss(trade, currentPrice);
 
       // Check if trade is complete
@@ -90,11 +87,7 @@ export class PositionMonitorService {
     }
   }
 
-  /**
-   * Get current market price (simulated)
-   */
   private async getCurrentPrice(symbol: string): Promise<number> {
-    // TODO: Integrate with MetaTrader API
     const prices: { [key: string]: number } = {
       XAUUSD: 4200 + Math.random() * 20,
       EURUSD: 1.085 + Math.random() * 0.002,
@@ -120,25 +113,21 @@ export class PositionMonitorService {
 
     if (openPositions.length === 0) return;
 
-    // Get the furthest entry price
     const furthestEntry =
       trade.direction === TradeDirection.BUY
         ? Math.max(...openPositions.map((p) => p.entryPrice))
         : Math.min(...openPositions.map((p) => p.entryPrice));
 
-    // Calculate pips from entry
     const pipSize = this.getPipSize(trade.symbol);
     const pipsFromEntry = Math.abs(
       calculatePipDistance(currentPrice, furthestEntry, pipSize)
     );
 
-    // Check if breakeven should activate
     if (pipsFromEntry >= settings.breakevenActivationPips) {
       console.log(`\n🛡️  BREAKEVEN ACTIVATED for trade ${trade.id}`);
       console.log(`   Price moved ${pipsFromEntry.toFixed(1)} pips`);
       console.log(`   Threshold: ${settings.breakevenActivationPips} pips\n`);
 
-      // Move all stop losses to entry prices
       for (const position of openPositions) {
         position.currentStopLoss = position.entryPrice;
         position.breakevenActivated = true;
@@ -149,12 +138,10 @@ export class PositionMonitorService {
         );
       }
 
-      // Update trade
       trade.breakevenActivated = true;
       trade.breakevenActivatedAt = new Date();
       await this.tradeRepo.save(trade);
 
-      // Send notification
       await this.sendBreakevenNotification(trade, currentPrice);
     }
   }
@@ -172,7 +159,6 @@ export class PositionMonitorService {
 
     if (openPositions.length === 0) return;
 
-    // Check each TP level
     for (const tp of trade.takeProfits) {
       const tpReached =
         trade.direction === TradeDirection.BUY
@@ -203,17 +189,14 @@ export class PositionMonitorService {
     console.log(`   Current: ${currentPrice.toFixed(5)}`);
     console.log(`   Closing ${positionsToClose} position(s)\n`);
 
-    // Sort by entry price (best first)
-    const sortedPositions = [...openPositions].sort(
-      (a, b) =>
-        trade.direction === TradeDirection.BUY
-          ? a.entryPrice - b.entryPrice // Lowest entry = most profit for BUY
-          : b.entryPrice - a.entryPrice // Highest entry = most profit for SELL
+    const sortedPositions = [...openPositions].sort((a, b) =>
+      trade.direction === TradeDirection.BUY
+        ? a.entryPrice - b.entryPrice
+        : b.entryPrice - a.entryPrice
     );
 
     let totalProfit = 0;
 
-    // Close positions
     for (let i = 0; i < positionsToClose; i++) {
       const position = sortedPositions[i];
 
@@ -239,12 +222,10 @@ export class PositionMonitorService {
       );
     }
 
-    // Update trade
     trade.grossProfit += totalProfit;
     trade.netProfit = trade.grossProfit - trade.commissions;
     await this.tradeRepo.save(trade);
 
-    // Send notification
     await this.sendTakeProfitNotification(
       trade,
       tp.level,
@@ -310,12 +291,10 @@ export class PositionMonitorService {
 
     await this.positionRepo.save(position);
 
-    // Update trade
     trade.grossProfit += loss;
     trade.netProfit = trade.grossProfit - trade.commissions;
     await this.tradeRepo.save(trade);
 
-    // Send notification only if all positions closed
     const remainingOpen = trade.positions.filter(
       (p) => p.status === PositionStatus.OPEN
     ).length;
@@ -344,17 +323,14 @@ export class PositionMonitorService {
     }
   }
 
-  /**
-   * Calculate profit for a position
-   */
   private calculateProfit(
     entryPrice: number,
     exitPrice: number,
     lotSize: number,
     direction: TradeDirection
   ): number {
-    const pipSize = 0.01; // Simplified
-    const pipValue = 1; // $1 per pip per 0.01 lot
+    const pipSize = 0.01;
+    const pipValue = 1;
 
     const pips =
       direction === TradeDirection.BUY
@@ -364,9 +340,6 @@ export class PositionMonitorService {
     return pips * lotSize * pipValue;
   }
 
-  /**
-   * Get pip size for symbol
-   */
   private getPipSize(symbol: string): number {
     const pipSizes: { [key: string]: number } = {
       XAUUSD: 0.01,
@@ -381,7 +354,7 @@ export class PositionMonitorService {
   }
 
   /**
-   * Send breakeven notification
+   * ✅ Send breakeven notification (EMAIL + WEBSOCKET)
    */
   private async sendBreakevenNotification(
     trade: Trade,
@@ -394,26 +367,44 @@ export class PositionMonitorService {
 
       if (!user) return;
 
-      await this.emailService.sendBreakevenActivatedEmail(
-        {
-          userName: user.fullName,
+      const notificationData = {
+        userName: user.fullName,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        totalPositions: trade.totalPositions,
+        currentProfit: trade.grossProfit,
+        tradeId: trade.id,
+        activationPrice,
+      };
+
+      // ✅ EMIT WEBSOCKET EVENT
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.emitBreakevenActivated(user.id, {
+          id: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
           totalPositions: trade.totalPositions,
           currentProfit: trade.grossProfit,
-          tradeId: trade.id,
           activationPrice,
-        },
+        });
+        console.log("📡 WebSocket: Breakeven activated event emitted");
+      }
+
+      // Send email
+      await this.emailService.sendBreakevenActivatedEmail(
+        notificationData,
         user.id,
         user.email
       );
+      console.log("📧 Email: Breakeven notification sent");
     } catch (error) {
-      console.error("⚠️  Failed to send breakeven email:", error);
+      console.error("⚠️  Failed to send breakeven notification:", error);
     }
   }
 
   /**
-   * Send take profit notification
+   * ✅ Send take profit notification (EMAIL + WEBSOCKET)
    */
   private async sendTakeProfitNotification(
     trade: Trade,
@@ -430,29 +421,54 @@ export class PositionMonitorService {
 
       if (!user) return;
 
+      const notificationData = {
+        userName: user.fullName,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        tpLevel,
+        tpPrice,
+        positionsClosed,
+        positionsRemaining,
+        profitFromTP,
+        totalProfit: trade.grossProfit,
+        tradeId: trade.id,
+      };
+
+      // ✅ EMIT WEBSOCKET EVENT
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.emitTakeProfitHit(
+          user.id,
+          {
+            id: trade.id,
+            symbol: trade.symbol,
+            direction: trade.direction,
+            tpLevel,
+            tpPrice,
+            positionsClosed,
+            positionsRemaining,
+            profitFromTP,
+            totalProfit: trade.grossProfit,
+          },
+          tpLevel
+        );
+        console.log(`📡 WebSocket: TP${tpLevel} hit event emitted`);
+      }
+
+      // Send email
       await this.emailService.sendTakeProfitHitEmail(
-        {
-          userName: user.fullName,
-          symbol: trade.symbol,
-          direction: trade.direction,
-          tpLevel,
-          tpPrice,
-          positionsClosed,
-          positionsRemaining,
-          profitFromTP,
-          totalProfit: trade.grossProfit,
-          tradeId: trade.id,
-        },
+        notificationData,
         user.id,
         user.email
       );
+      console.log(`📧 Email: TP${tpLevel} notification sent`);
     } catch (error) {
-      console.error("⚠️  Failed to send TP email:", error);
+      console.error("⚠️  Failed to send TP notification:", error);
     }
   }
 
   /**
-   * Send stop loss notification
+   * ✅ Send stop loss notification (EMAIL + WEBSOCKET)
    */
   private async sendStopLossNotification(
     trade: Trade,
@@ -470,28 +486,47 @@ export class PositionMonitorService {
         (p) => p.status === PositionStatus.CLOSED
       ).length;
 
-      await this.emailService.sendStopLossHitEmail(
-        {
-          userName: user.fullName,
+      const notificationData = {
+        userName: user.fullName,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        stopLossType: isBreakeven
+          ? ("breakeven" as const)
+          : ("original" as const),
+        lossAmount,
+        positionsClosed,
+        tradeId: trade.id,
+        accountBalance: 10000,
+        riskPercentage: 10,
+      };
+
+      // ✅ EMIT WEBSOCKET EVENT
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.emitStopLossHit(user.id, {
+          id: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
           stopLossType: isBreakeven ? "breakeven" : "original",
           lossAmount,
-          positionsClosed,
-          tradeId: trade.id,
-          accountBalance: 10000, // TODO: Get from account
-          riskPercentage: 10, // TODO: Get from settings
-        },
+        });
+        console.log("📡 WebSocket: Stop loss hit event emitted");
+      }
+
+      // Send email
+      await this.emailService.sendStopLossHitEmail(
+        notificationData,
         user.id,
         user.email
       );
+      console.log("📧 Email: Stop loss notification sent");
     } catch (error) {
-      console.error("⚠️  Failed to send SL email:", error);
+      console.error("⚠️  Failed to send SL notification:", error);
     }
   }
 
   /**
-   * Send trade completed notification
+   * ✅ Send trade completed notification (EMAIL + WEBSOCKET)
    */
   private async sendTradeCompletedNotification(trade: Trade): Promise<void> {
     try {
@@ -501,7 +536,6 @@ export class PositionMonitorService {
 
       if (!user) return;
 
-      // Calculate duration
       const duration =
         trade.closedAt && trade.openedAt
           ? this.formatDuration(
@@ -509,7 +543,6 @@ export class PositionMonitorService {
             )
           : "N/A";
 
-      // Calculate averages
       const avgEntry =
         trade.positions.reduce((sum, p) => sum + p.entryPrice, 0) /
         trade.positions.length;
@@ -520,37 +553,55 @@ export class PositionMonitorService {
           .reduce((sum, p) => sum + (p.closedPrice || 0), 0) /
         trade.positions.filter((p) => p.closedPrice).length;
 
-      await this.emailService.sendTradeCompletedEmail(
-        {
-          userName: user.fullName,
+      const notificationData = {
+        userName: user.fullName,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        totalPositions: trade.totalPositions,
+        duration,
+        netProfit: trade.netProfit,
+        returnOnRisk: (trade.netProfit / trade.totalRiskAmount) * 100,
+        averageEntry: avgEntry,
+        averageExit: avgExit,
+        tradeId: trade.id,
+        positionBreakdown: trade.positions.map((p) => ({
+          position: p.positionNumber,
+          entryPrice: p.entryPrice,
+          exitPrice: p.closedPrice || 0,
+          profit: p.profit,
+          closeReason: p.closeReason || "unknown",
+        })),
+      };
+
+      // ✅ EMIT WEBSOCKET EVENT
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.emitTradeCompleted(user.id, {
+          id: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
           totalPositions: trade.totalPositions,
           duration,
           netProfit: trade.netProfit,
           returnOnRisk: (trade.netProfit / trade.totalRiskAmount) * 100,
-          averageEntry: avgEntry,
-          averageExit: avgExit,
-          tradeId: trade.id,
-          positionBreakdown: trade.positions.map((p) => ({
-            position: p.positionNumber,
-            entryPrice: p.entryPrice,
-            exitPrice: p.closedPrice || 0,
-            profit: p.profit,
-            closeReason: p.closeReason || "unknown",
-          })),
-        },
+          status: trade.status,
+          closedAt: trade.closedAt,
+        });
+        console.log("📡 WebSocket: Trade completed event emitted");
+      }
+
+      // Send email
+      await this.emailService.sendTradeCompletedEmail(
+        notificationData,
         user.id,
         user.email
       );
+      console.log("📧 Email: Trade completed notification sent");
     } catch (error) {
-      console.error("⚠️  Failed to send trade completed email:", error);
+      console.error("⚠️  Failed to send trade completed notification:", error);
     }
   }
 
-  /**
-   * Format duration
-   */
   private formatDuration(ms: number): string {
     const minutes = Math.floor(ms / 60000);
     const hours = Math.floor(minutes / 60);

@@ -11,6 +11,7 @@ import {
 import { generateRandomToken } from "../helpers/encryption.helper";
 import { UserRole, UserStatus, SubscriptionTier } from "../types";
 import { EmailService } from "./email.service";
+import { getWebSocketServer } from "../helpers/../websocket/socket.server"; // ✅ ADD THIS IMPORT
 
 export interface RegisterDTO {
   email: string;
@@ -66,23 +67,22 @@ export class AuthService {
       throw new Error("User with this email already exists");
     }
 
-    // Create user - NO EMAIL VERIFICATION NEEDED
-    // Since they purchased the invitation code with this email, we trust it
+    // Create user
     const user = this.userRepo.create({
       email: data.email.toLowerCase(),
       fullName: data.fullName,
-      password: data.password, // Will be hashed by entity hook
+      password: data.password,
       role: UserRole.USER,
       status: UserStatus.ACTIVE,
       tier: invitation.tier,
       invitation_code_id: invitation.id,
-      emailVerified: true, // Auto-verify since they used their email to purchase
+      emailVerified: true,
       subscriptionExpiresAt: this.calculateSubscriptionExpiry(invitation.tier),
     });
 
     await this.userRepo.save(user);
 
-    // Create default settings based on tier
+    // Create default settings
     const settings = this.createDefaultSettings(user.id, invitation.tier);
     await this.settingsRepo.save(settings);
 
@@ -90,7 +90,21 @@ export class AuthService {
     invitation.markAsUsed();
     await this.invitationRepo.save(invitation);
 
-    // Send welcome email with complete setup instructions
+    // ✅ EMIT WEBSOCKET EVENT TO ALL ADMINS (NEW USER REGISTERED)
+    const wsServer = getWebSocketServer();
+    if (wsServer) {
+      wsServer.emitNewUserRegistration({
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        tier: user.tier,
+        createdAt: user.createdAt,
+        invitationCode: invitation.code,
+      });
+      console.log("📡 WebSocket: New user registration event sent to admins");
+    }
+
+    // Send welcome email
     try {
       await this.emailService.sendWelcomeEmail(
         {
@@ -104,7 +118,6 @@ export class AuthService {
       console.log(`✅ Welcome email sent to ${user.email}`);
     } catch (emailError) {
       console.error("⚠️  Failed to send welcome email:", emailError);
-      // Don't fail registration if email fails
     }
 
     // Generate tokens

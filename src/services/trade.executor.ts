@@ -1,25 +1,26 @@
-// FILE: src/services/trade.executor.ts
+// FILE: src/services/trade.executor.ts (UPDATED WITH WEBSOCKET)
 // =============================================
-// PHASE 8: TRADE EXECUTION SERVICE
+// PHASE 8: TRADE EXECUTION SERVICE + PHASE 12: WEBSOCKET
 // =============================================
 
-import AppDataSource from '../config/database.config';
-import { Trade } from '../database/entities/Trade.entity';
-import { Position } from '../database/entities/Position.entity';
-import { Signal } from '../database/entities/Signal.entity';
-import { User } from '../database/entities/User.entity';
-import { UserSettings } from '../database/entities/UserSettings.entity';
-import { TradingAccount } from '../database/entities/TradingAccount.entity';
-import { RiskCalculator } from './risk.calculator';
-import { RiskValidationService } from './risk.validation';
-import { EmailService } from './email.service';
-import { 
-  TradeDirection, 
-  TradeStatus, 
-  PositionStatus, 
-  OrderType 
-} from '../types';
-import { distributePositionsAcrossRange } from '../helpers/math.helper';
+import AppDataSource from "../config/database.config";
+import { Trade } from "../database/entities/Trade.entity";
+import { Position } from "../database/entities/Position.entity";
+import { Signal } from "../database/entities/Signal.entity";
+import { User } from "../database/entities/User.entity";
+import { UserSettings } from "../database/entities/UserSettings.entity";
+import { TradingAccount } from "../database/entities/TradingAccount.entity";
+import { RiskCalculator } from "./risk.calculator";
+import { RiskValidationService } from "./risk.validation";
+import { EmailService } from "./email.service";
+import { getWebSocketServer } from "../websocket/socket.server"; // ✅ ADDED
+import {
+  TradeDirection,
+  TradeStatus,
+  PositionStatus,
+  OrderType,
+} from "../types";
+import { distributePositionsAcrossRange } from "../helpers/math.helper";
 
 export interface TradeExecutionResult {
   success: boolean;
@@ -39,7 +40,7 @@ export class TradeExecutorService {
   private userRepo = AppDataSource.getRepository(User);
   private settingsRepo = AppDataSource.getRepository(UserSettings);
   private accountRepo = AppDataSource.getRepository(TradingAccount);
-  
+
   private riskCalculator: RiskCalculator;
   private riskValidator: RiskValidationService;
   private emailService: EmailService;
@@ -53,7 +54,10 @@ export class TradeExecutorService {
   /**
    * Main execution function - Execute a trade for a user
    */
-  async executeTrade(userId: string, signalId: string): Promise<TradeExecutionResult> {
+  async executeTrade(
+    userId: string,
+    signalId: string
+  ): Promise<TradeExecutionResult> {
     console.log(`\n🚀 EXECUTING TRADE`);
     console.log(`   User: ${userId}`);
     console.log(`   Signal: ${signalId}\n`);
@@ -68,10 +72,10 @@ export class TradeExecutorService {
       // 2. Validate market price is still within entry range
       const currentPrice = await this.getCurrentMarketPrice(signal.symbol);
       if (!this.isPriceValid(signal, currentPrice)) {
-        console.log('❌ Price moved outside entry range - signal expired');
+        console.log("❌ Price moved outside entry range - signal expired");
         return {
           success: false,
-          error: 'Market price outside entry range',
+          error: "Market price outside entry range",
         };
       }
 
@@ -88,14 +92,16 @@ export class TradeExecutorService {
       });
 
       if (!riskCalc.success) {
-        console.log('❌ Lot size calculation failed:', riskCalc.error);
+        console.log("❌ Lot size calculation failed:", riskCalc.error);
         return {
           success: false,
           error: riskCalc.error,
         };
       }
 
-      console.log(`💰 Lot size calculated: ${riskCalc.lotSizePerPosition.toFixed(2)}`);
+      console.log(
+        `💰 Lot size calculated: ${riskCalc.lotSizePerPosition.toFixed(2)}`
+      );
 
       // 4. Validate all risk parameters
       const requiredMargin = this.riskCalculator.calculateMarginRequired(
@@ -115,14 +121,14 @@ export class TradeExecutorService {
       );
 
       if (!riskValidation.valid) {
-        console.log('❌ Risk validation failed:', riskValidation.reason);
+        console.log("❌ Risk validation failed:", riskValidation.reason);
         return {
           success: false,
           error: riskValidation.reason,
         };
       }
 
-      console.log('✅ Risk validation passed\n');
+      console.log("✅ Risk validation passed\n");
 
       // 5. Generate entry prices for each position
       const entryPrices = this.generateEntryPrices(
@@ -132,11 +138,11 @@ export class TradeExecutorService {
         settings.positionsPerTrade
       );
 
-      console.log('📍 Entry prices generated:');
+      console.log("📍 Entry prices generated:");
       entryPrices.forEach((price, i) => {
         console.log(`   Position ${i + 1}: ${price.toFixed(5)}`);
       });
-      console.log('');
+      console.log("");
 
       // 6. Create master trade record
       const trade = await this.createTradeRecord(
@@ -161,7 +167,7 @@ export class TradeExecutorService {
 
       console.log(`✅ ${positionsOpened} positions opened\n`);
 
-      // 8. Send trade opened email
+      // 8. Send notifications (EMAIL + WEBSOCKET)
       await this.sendTradeOpenedNotification(user, trade, signal, entryPrices);
 
       return {
@@ -174,7 +180,7 @@ export class TradeExecutorService {
         },
       };
     } catch (error: any) {
-      console.error('❌ Trade execution failed:', error.message);
+      console.error("❌ Trade execution failed:", error.message);
       return {
         success: false,
         error: error.message,
@@ -186,41 +192,37 @@ export class TradeExecutorService {
    * Load all required data for trade execution
    */
   private async loadTradeData(userId: string, signalId: string) {
-    // Load user
     const user = await this.userRepo.findOne({
       where: { id: userId },
     });
 
     if (!user) {
-      throw new Error('User not found');
+      throw new Error("User not found");
     }
 
-    // Load signal
     const signal = await this.signalRepo.findOne({
       where: { id: signalId },
-      relations: ['channel'],
+      relations: ["channel"],
     });
 
     if (!signal) {
-      throw new Error('Signal not found');
+      throw new Error("Signal not found");
     }
 
-    // Load settings
     const settings = await this.settingsRepo.findOne({
       where: { user_id: userId },
     });
 
     if (!settings) {
-      throw new Error('User settings not found');
+      throw new Error("User settings not found");
     }
 
-    // Load trading account
     const account = await this.accountRepo.findOne({
       where: { user_id: userId, isPrimary: true, isActive: true },
     });
 
     if (!account) {
-      throw new Error('No active trading account found');
+      throw new Error("No active trading account found");
     }
 
     return { user, signal, settings, account };
@@ -230,15 +232,11 @@ export class TradeExecutorService {
    * Get current market price (simulated for now)
    */
   private async getCurrentMarketPrice(symbol: string): Promise<number> {
-    // TODO: Integrate with MetaTrader API
-    // For now, return a simulated price
-    
-    // Simulate realistic prices
     const prices: { [key: string]: number } = {
       XAUUSD: 4200 + Math.random() * 10,
-      EURUSD: 1.0850 + Math.random() * 0.001,
-      GBPUSD: 1.2700 + Math.random() * 0.001,
-      USDJPY: 149.50 + Math.random() * 0.1,
+      EURUSD: 1.085 + Math.random() * 0.001,
+      GBPUSD: 1.27 + Math.random() * 0.001,
+      USDJPY: 149.5 + Math.random() * 0.1,
       BTCUSD: 95000 + Math.random() * 100,
     };
 
@@ -249,7 +247,7 @@ export class TradeExecutorService {
    * Validate price is within entry range
    */
   private isPriceValid(signal: Signal, currentPrice: number): boolean {
-    const buffer = 0.001; // 0.1% buffer
+    const buffer = 0.001;
 
     if (signal.direction === TradeDirection.BUY) {
       return currentPrice <= signal.entryMax * (1 + buffer);
@@ -272,10 +270,9 @@ export class TradeExecutorService {
         entryMin,
         entryMax,
         totalPositions,
-        2 // 2 immediate entries
+        2
       );
     } else {
-      // For SELL, invert the range
       const prices = distributePositionsAcrossRange(
         entryMin,
         entryMax,
@@ -331,7 +328,6 @@ export class TradeExecutorService {
    * Get number of positions to close at each TP level
    */
   private getPositionsForTP(tpIndex: number, totalPositions: number): number {
-    // Default distribution: 40% at TP1, 40% at TP2, 20% at TP3
     if (tpIndex === 0) {
       return Math.ceil(totalPositions * 0.4);
     } else if (tpIndex === 1) {
@@ -355,10 +351,9 @@ export class TradeExecutorService {
 
     for (let i = 0; i < entryPrices.length; i++) {
       const entryPrice = entryPrices[i];
-      const isImmediateEntry = i < 2; // First 2 positions enter immediately
+      const isImmediateEntry = i < 2;
 
       try {
-        // Create position record
         const position = this.positionRepo.create({
           trade_id: trade.id,
           positionNumber: i + 1,
@@ -369,25 +364,28 @@ export class TradeExecutorService {
           mtOrderTicket: this.generateTicketNumber(),
           orderType: isImmediateEntry ? OrderType.MARKET : OrderType.LIMIT,
           breakevenActivated: false,
-          status: isImmediateEntry ? PositionStatus.OPEN : PositionStatus.PENDING,
+          status: isImmediateEntry
+            ? PositionStatus.OPEN
+            : PositionStatus.PENDING,
           profit: 0,
           openedAt: isImmediateEntry ? new Date() : null,
         });
 
         await this.positionRepo.save(position);
-        
+
         if (isImmediateEntry) {
           positionsOpened++;
           trade.positionsFilled++;
         }
 
-        console.log(`   ✅ Position ${i + 1} placed: ${isImmediateEntry ? 'MARKET' : 'LIMIT'} @ ${entryPrice.toFixed(5)}`);
+        console.log(
+          `   ✅ Position ${i + 1} placed: ${isImmediateEntry ? "MARKET" : "LIMIT"} @ ${entryPrice.toFixed(5)}`
+        );
       } catch (error) {
         console.error(`   ❌ Failed to place position ${i + 1}:`, error);
       }
     }
 
-    // Update trade status
     trade.status = TradeStatus.OPEN;
     trade.openedAt = new Date();
     await this.tradeRepo.save(trade);
@@ -403,7 +401,7 @@ export class TradeExecutorService {
   }
 
   /**
-   * Send trade opened notification
+   * ✅ Send trade opened notification (EMAIL + WEBSOCKET)
    */
   private async sendTradeOpenedNotification(
     user: User,
@@ -412,30 +410,54 @@ export class TradeExecutorService {
     entryPrices: number[]
   ): Promise<void> {
     try {
-      await this.emailService.sendTradeOpenedEmail(
-        {
-          userName: user.fullName,
+      const tradeData = {
+        userName: user.fullName,
+        symbol: trade.symbol,
+        direction: trade.direction,
+        totalPositions: trade.totalPositions,
+        lotSize: trade.lotSizePerPosition,
+        stopLoss: trade.stopLoss,
+        takeProfits: trade.takeProfits,
+        riskAmount: trade.totalRiskAmount,
+        entryPrices: entryPrices.map((price, i) => ({
+          position: i + 1,
+          price,
+        })),
+        averageEntry:
+          entryPrices.reduce((a, b) => a + b, 0) / entryPrices.length,
+        tradeId: trade.id,
+      };
+
+      // ✅ EMIT WEBSOCKET EVENT (REAL-TIME)
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        wsServer.emitTradeOpened(user.id, {
+          id: trade.id,
           symbol: trade.symbol,
           direction: trade.direction,
           totalPositions: trade.totalPositions,
+          positionsFilled: trade.positionsFilled,
           lotSize: trade.lotSizePerPosition,
+          riskAmount: trade.totalRiskAmount,
+          entryPrices,
           stopLoss: trade.stopLoss,
           takeProfits: trade.takeProfits,
-          riskAmount: trade.totalRiskAmount,
-          entryPrices: entryPrices.map((price, i) => ({
-            position: i + 1,
-            price,
-          })),
-          averageEntry: entryPrices.reduce((a, b) => a + b, 0) / entryPrices.length,
-          tradeId: trade.id,
-        },
+          status: trade.status,
+          openedAt: trade.openedAt,
+        });
+        console.log("📡 WebSocket: Trade opened event emitted");
+      }
+
+      // Send email notification
+      await this.emailService.sendTradeOpenedEmail(
+        tradeData,
         user.id,
         user.email
       );
 
-      console.log('📧 Trade opened email sent');
+      console.log("📧 Email: Trade opened notification sent");
     } catch (error) {
-      console.error('⚠️  Failed to send trade opened email:', error);
+      console.error("⚠️  Failed to send trade opened notification:", error);
     }
   }
 }

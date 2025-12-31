@@ -1,33 +1,40 @@
-// =============================================
 // FILE: src/routes/admin/analytics.routes.ts
 // =============================================
-import { Router as AnalyticsRouter, Request, Response } from 'express';
-import { TradeService } from '../../services/trade.service';
-import { requireAdmin } from '../../middleware/role.middleware';
+// PHASE 11: ADMIN ANALYTICS ROUTES (COMPLETE)
+// =============================================
+
+import { Router } from 'express';
+import { AdminAnalyticsController } from '../../controllers/admin/analytics.controller';
 import { authenticate } from '../../middleware/auth.middleware';
+import { requireAdmin } from '../../middleware/role.middleware';
+import { apiRateLimit } from '../../middleware/rateLimit.middleware';
 
-const analyticsRouter = AnalyticsRouter();
-const tradeService = new TradeService();
+const router = Router();
+const analyticsController = new AdminAnalyticsController();
 
-analyticsRouter.use(authenticate, requireAdmin);
+// All routes require authentication and admin role
+router.use(authenticate);
+router.use(requireAdmin);
 
-// GET /api/v1/admin/analytics/trades
-analyticsRouter.get('/trades', async (req: Request, res: Response) => {
-  try {
-    // Get aggregated trade analytics for all users
-    const dateFrom = req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined;
-    const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : undefined;
-    
-    res.json({
-      success: true,
-      data: {
-        message: 'Analytics endpoint - implement as needed',
-        dateRange: { dateFrom, dateTo },
-      },
-    });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
+// GET /api/v1/admin/analytics/system
+router.get(
+  '/system',
+  apiRateLimit,
+  (req, res) => analyticsController.getSystemAnalytics(req, res)
+);
 
-export { analyticsRouter };
+// GET /api/v1/admin/analytics/trends
+router.get(
+  '/trends',
+  apiRateLimit,
+  (req, res) => analyticsController.getPerformanceTrends(req, res)
+);
+
+// GET /api/v1/admin/analytics/dashboard
+router.get(
+  '/dashboard',
+  apiRateLimit,
+  (req, res) => analyticsController.getRealTimeDashboard(req, res)
+);
+
+export default router;

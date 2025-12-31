@@ -1,14 +1,18 @@
-// FILE: src/handlers/signal.handler.ts
+// FILE: src/handlers/signal.handler.ts (UPDATED WITH WEBSOCKET)
 // =============================================
-import AppDataSource from '../config/database.config';
-import { Signal } from '../database/entities/Signal.entity';
-import { UserChannelSubscription } from '../database/entities/UserChannelSubscription.entity';
-import { UserSettings } from '../database/entities/UserSettings.entity';
-import { Trade } from '../database/entities/Trade.entity';
-import { SignalStatus, TradeStatus, TradeDirection } from '../types';
-import { isWithinTradingHours } from '../helpers/date.helper';
-import { Queue } from 'bullmq';
-import { getRedisClient } from '../config/redis.config';
+// PHASE 6: SIGNAL HANDLER + PHASE 12: WEBSOCKET
+// =============================================
+
+import AppDataSource from "../config/database.config";
+import { Signal } from "../database/entities/Signal.entity";
+import { UserChannelSubscription } from "../database/entities/UserChannelSubscription.entity";
+import { UserSettings } from "../database/entities/UserSettings.entity";
+import { Trade } from "../database/entities/Trade.entity";
+import { SignalStatus, TradeStatus, TradeDirection } from "../types";
+import { isWithinTradingHours } from "../helpers/date.helper";
+import { Queue } from "bullmq";
+import { getRedisClient } from "../config/redis.config";
+import { getWebSocketServer } from "../websocket/socket.server"; // ✅ ADDED
 
 export interface UserMatchResult {
   userId: string;
@@ -20,7 +24,9 @@ export interface UserMatchResult {
 
 export class SignalHandler {
   private signalRepo = AppDataSource.getRepository(Signal);
-  private subscriptionRepo = AppDataSource.getRepository(UserChannelSubscription);
+  private subscriptionRepo = AppDataSource.getRepository(
+    UserChannelSubscription
+  );
   private settingsRepo = AppDataSource.getRepository(UserSettings);
   private tradeRepo = AppDataSource.getRepository(Trade);
   private executionQueue: Queue | null = null;
@@ -29,47 +35,40 @@ export class SignalHandler {
     this.initializeQueue();
   }
 
-  /**
-   * Initialize execution queue
-   */
   private initializeQueue() {
     const redis = getRedisClient();
-    if (redis && redis.status === 'ready') {
-      this.executionQueue = new Queue('trade-execution', {
+    if (redis && redis.status === "ready") {
+      this.executionQueue = new Queue("trade-execution", {
         connection: redis,
       });
-      console.log('✅ Trade execution queue initialized');
+      console.log("✅ Trade execution queue initialized");
     }
   }
 
   /**
    * Process a newly created signal
-   * This is the main entry point after a signal is parsed and saved
    */
   async processNewSignal(signalId: string): Promise<void> {
     try {
       console.log(`\n🔄 Processing signal: ${signalId}`);
 
-      // Load the signal
       const signal = await this.signalRepo.findOne({
         where: { id: signalId },
-        relations: ['channel'],
+        relations: ["channel"],
       });
 
       if (!signal) {
-        console.error('❌ Signal not found:', signalId);
+        console.error("❌ Signal not found:", signalId);
         return;
       }
 
-      // Check if signal is still active
       if (signal.status !== SignalStatus.ACTIVE) {
-        console.log('⚠️  Signal is not active, skipping');
+        console.log("⚠️  Signal is not active, skipping");
         return;
       }
 
-      // Check if signal has expired
       if (signal.expiresAt < new Date()) {
-        console.log('⏰ Signal expired, marking as expired');
+        console.log("⏰ Signal expired, marking as expired");
         signal.status = SignalStatus.EXPIRED;
         await this.signalRepo.save(signal);
         return;
@@ -82,14 +81,34 @@ export class SignalHandler {
       console.log(`   SL: ${signal.stopLoss}`);
       console.log(`   TPs: ${signal.takeProfits.length} levels`);
 
-      // Find all eligible users
       const eligibleUsers = await this.findEligibleUsers(signal);
 
       console.log(`👥 Found ${eligibleUsers.length} eligible users`);
 
       if (eligibleUsers.length === 0) {
-        console.log('⚠️  No eligible users for this signal');
+        console.log("⚠️  No eligible users for this signal");
         return;
+      }
+
+      // ✅ EMIT WEBSOCKET EVENT TO ALL ELIGIBLE USERS
+      const wsServer = getWebSocketServer();
+      if (wsServer) {
+        for (const user of eligibleUsers) {
+          wsServer.emitSignalDetected(user.userId, {
+            id: signal.id,
+            symbol: signal.symbol,
+            direction: signal.direction,
+            entryMin: signal.entryMin,
+            entryMax: signal.entryMax,
+            stopLoss: signal.stopLoss,
+            takeProfits: signal.takeProfits,
+            channel: signal.channel.title,
+            signalTime: signal.signalTime,
+          });
+        }
+        console.log(
+          `📡 WebSocket: Signal detected events sent to ${eligibleUsers.length} users`
+        );
       }
 
       // Queue trade execution for each eligible user
@@ -99,7 +118,7 @@ export class SignalHandler {
 
       console.log(`✅ Queued ${eligibleUsers.length} trade executions\n`);
     } catch (error) {
-      console.error('❌ Error processing signal:', error);
+      console.error("❌ Error processing signal:", error);
     }
   }
 
@@ -109,13 +128,12 @@ export class SignalHandler {
   private async findEligibleUsers(signal: Signal): Promise<UserMatchResult[]> {
     const eligibleUsers: UserMatchResult[] = [];
 
-    // Find all users subscribed to this channel
     const subscriptions = await this.subscriptionRepo.find({
       where: {
         channel_id: signal.channel_id,
         isActive: true,
       },
-      relations: ['user'],
+      relations: ["user"],
     });
 
     console.log(`📋 Checking ${subscriptions.length} subscribed users...`);
@@ -123,7 +141,6 @@ export class SignalHandler {
     for (const subscription of subscriptions) {
       const user = subscription.user;
 
-      // Load user settings
       const settings = await this.settingsRepo.findOne({
         where: { user_id: user.id },
       });
@@ -133,65 +150,59 @@ export class SignalHandler {
         continue;
       }
 
-      // Check if user can create trades
       if (!user.canCreateTrades()) {
-        console.log(`   ❌ User ${user.email}: Account not active or subscription expired`);
+        console.log(
+          `   ❌ User ${user.email}: Account not active or subscription expired`
+        );
         continue;
       }
 
-      // Check if trading is enabled
       if (!settings.tradingEnabled) {
         console.log(`   ⏸️  User ${user.email}: Trading disabled`);
         continue;
       }
 
-      // Check if symbol is allowed
       if (!this.isSymbolAllowed(signal.symbol, settings.allowedSymbols)) {
-        console.log(`   🚫 User ${user.email}: Symbol ${signal.symbol} not allowed`);
+        console.log(
+          `   🚫 User ${user.email}: Symbol ${signal.symbol} not allowed`
+        );
         continue;
       }
 
-      // Check if within trading hours
       if (!this.isWithinTradingHours(settings)) {
         console.log(`   🕐 User ${user.email}: Outside trading hours`);
         continue;
       }
 
-      // Check concurrent trades limit
-      const hasCapacity = await this.hasTradeCapacity(user.id, settings.maxConcurrentTrades);
+      const hasCapacity = await this.hasTradeCapacity(
+        user.id,
+        settings.maxConcurrentTrades
+      );
       if (!hasCapacity) {
         console.log(`   📊 User ${user.email}: Max concurrent trades reached`);
         continue;
       }
 
-      // User passed all filters
       console.log(`   ✅ User ${user.email}: Eligible`);
-      
+
       eligibleUsers.push({
         userId: user.id,
         userEmail: user.email,
         userName: user.fullName,
         settings,
-        accountBalance: 10000, // TODO: Get from trading account
+        accountBalance: 10000,
       });
     }
 
     return eligibleUsers;
   }
 
-  /**
-   * Check if symbol is in allowed list
-   */
   private isSymbolAllowed(symbol: string, allowedSymbols: string[]): boolean {
-    if (allowedSymbols.length === 0) return true; // No filter = all allowed
+    if (allowedSymbols.length === 0) return true;
     return allowedSymbols.includes(symbol.toUpperCase());
   }
 
-  /**
-   * Check if current time is within user's trading hours
-   */
   private isWithinTradingHours(settings: UserSettings): boolean {
-    // If no trading hours set, allow 24/7
     if (!settings.tradingHoursStart || !settings.tradingHoursEnd) {
       return true;
     }
@@ -203,10 +214,10 @@ export class SignalHandler {
     );
   }
 
-  /**
-   * Check if user has capacity for more trades
-   */
-  private async hasTradeCapacity(userId: string, maxConcurrent: number): Promise<boolean> {
+  private async hasTradeCapacity(
+    userId: string,
+    maxConcurrent: number
+  ): Promise<boolean> {
     const openTrades = await this.tradeRepo.count({
       where: {
         user_id: userId,
@@ -217,19 +228,18 @@ export class SignalHandler {
     return openTrades < maxConcurrent;
   }
 
-  /**
-   * Queue trade execution for a user
-   */
-  private async queueTradeExecution(signal: Signal, user: UserMatchResult): Promise<void> {
+  private async queueTradeExecution(
+    signal: Signal,
+    user: UserMatchResult
+  ): Promise<void> {
     try {
       if (!this.executionQueue) {
-        console.log('⚠️  Execution queue not available - skipping queue');
-        // TODO: Execute directly without queue
+        console.log("⚠️  Execution queue not available - skipping queue");
         return;
       }
 
       await this.executionQueue.add(
-        'execute-trade',
+        "execute-trade",
         {
           signalId: signal.id,
           userId: user.userId,
@@ -239,10 +249,10 @@ export class SignalHandler {
           direction: signal.direction,
         },
         {
-          priority: 1, // High priority
+          priority: 1,
           attempts: 3,
           backoff: {
-            type: 'exponential',
+            type: "exponential",
             delay: 2000,
           },
         }
@@ -250,13 +260,13 @@ export class SignalHandler {
 
       console.log(`   📤 Queued execution for ${user.userEmail}`);
     } catch (error) {
-      console.error(`   ❌ Failed to queue execution for ${user.userEmail}:`, error);
+      console.error(
+        `   ❌ Failed to queue execution for ${user.userEmail}:`,
+        error
+      );
     }
   }
 
-  /**
-   * Mark signal as completed after all trades executed
-   */
   async markSignalCompleted(signalId: string): Promise<void> {
     try {
       const signal = await this.signalRepo.findOne({
@@ -269,13 +279,10 @@ export class SignalHandler {
         console.log(`✅ Signal ${signalId} marked as completed`);
       }
     } catch (error) {
-      console.error('❌ Error marking signal as completed:', error);
+      console.error("❌ Error marking signal as completed:", error);
     }
   }
 
-  /**
-   * Handle duplicate signal detection
-   */
   async checkForDuplicate(
     channelId: string,
     symbol: string,
@@ -295,14 +302,12 @@ export class SignalHandler {
       },
     });
 
-    // Check if any recent signal has similar entry price (within 0.1%)
     for (const signal of duplicates) {
       if (signal.signalTime < windowStart) continue;
 
       const priceDiff = Math.abs(signal.entryMax - entryPrice) / entryPrice;
       if (priceDiff < 0.001) {
-        // Within 0.1%
-        console.log('🔍 Duplicate signal detected, skipping');
+        console.log("🔍 Duplicate signal detected, skipping");
         return signal;
       }
     }
