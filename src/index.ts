@@ -47,6 +47,10 @@ import {
   startMetricsPushScheduler,
   stopMetricsPushScheduler,
 } from "./jobs/metrics-push.job";
+import {
+  startSubscriptionReminderJob,
+  stopSubscriptionReminderJob,
+} from './jobs/subscription-reminder.job';
 
 config();
 
@@ -106,6 +110,7 @@ app.get("/health", (_req: Request, res: Response) => {
 import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 import tradeRoutes from "./routes/trade.routes";
+ import channelRequestRoutes from './routes/channel-request.routes';
 
 // Admin routes
 import adminInvitationRoutes from "./routes/admin/invitation.routes";
@@ -137,6 +142,7 @@ app.get("/api/v1", (_req: Request, res: Response) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/trades", tradeRoutes);
+app.use('/api/v1/channel-requests', channelRequestRoutes);
 
 // Admin routes
 app.use("/api/v1/admin/invitations", adminInvitationRoutes);
@@ -216,6 +222,9 @@ async function startServer() {
     startMetricsPushScheduler(30); // Push every 30 seconds
     console.log("✅ Metrics push job started (30s intervals)\n");
 
+   startSubscriptionReminderJob();
+console.log('✅ Subscription reminder job started\n');
+
     // Start Telegram Listener
     if (process.env.TELEGRAM_ENABLED === "true") {
       console.log("📡 Starting Telegram listener...");
@@ -290,6 +299,7 @@ async function startServer() {
         stopMonitoringScheduler();
         stopDailyReportScheduler();
         stopMetricsPushScheduler(); // ✅ ADD THIS
+        stopSubscriptionReminderJob();
 
         console.log("⏹️  Closing connections...");
         await closeRedis();

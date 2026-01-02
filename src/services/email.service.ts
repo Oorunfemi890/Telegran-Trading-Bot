@@ -373,3 +373,252 @@ export class EmailService {
     });
   }
 }
+
+
+interface SubscriptionExpiryData {
+  recipientName: string;
+  recipientEmail: string;
+  tier: string;
+  expiryDate: Date;
+  daysRemaining: number;
+}
+
+/**
+ * Send subscription expiry reminder
+ */
+async sendSubscriptionExpiryReminder(data: SubscriptionExpiryData): Promise<void> {
+  if (!emailConfig.enabled || !emailConfig.apiKey) {
+    console.log('⚠️  Email notifications disabled');
+    return;
+  }
+
+  const urgencyLevel = data.daysRemaining === 1 ? 'urgent' : 
+                       data.daysRemaining === 3 ? 'warning' : 'info';
+
+  const subject = data.daysRemaining === 1
+    ? `⚠️ Your ${data.tier} subscription expires tomorrow!`
+    : `Reminder: Your ${data.tier} subscription expires in ${data.daysRemaining} days`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+          .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+          .alert { 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin: 20px 0;
+            ${urgencyLevel === 'urgent' ? 'background: #fef2f2; border-left: 4px solid #ef4444;' : 
+              urgencyLevel === 'warning' ? 'background: #fffbeb; border-left: 4px solid #f59e0b;' : 
+              'background: #eff6ff; border-left: 4px solid #3b82f6;'}
+          }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            margin: 20px 0;
+          }
+          .details { background: white; padding: 20px; border-radius: 6px; margin: 20px 0; }
+          .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Subscription Expiry Reminder</h1>
+          </div>
+          <div class="content">
+            <p>Hi ${data.recipientName},</p>
+            
+            <div class="alert">
+              <strong>${urgencyLevel === 'urgent' ? '⚠️ Urgent:' : '📅 Reminder:'}</strong> 
+              Your <strong>${data.tier.toUpperCase()}</strong> subscription will expire in 
+              <strong>${data.daysRemaining} day${data.daysRemaining > 1 ? 's' : ''}</strong>!
+            </div>
+
+            <div class="details">
+              <h3>Subscription Details</h3>
+              <p><strong>Plan:</strong> ${data.tier.toUpperCase()}</p>
+              <p><strong>Expiry Date:</strong> ${new Date(data.expiryDate).toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}</p>
+              <p><strong>Days Remaining:</strong> ${data.daysRemaining}</p>
+            </div>
+
+            <p>To continue enjoying uninterrupted access to your trading bot, please renew your subscription before it expires.</p>
+
+            <center>
+              <a href="${process.env.FRONTEND_URL}/subscription/renew" class="button">
+                Renew Subscription
+              </a>
+            </center>
+
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              Once your subscription expires, your trading bot will be paused until you renew.
+            </p>
+
+            <div class="footer">
+              <p>Need help? Contact us at support@tradingbot.com</p>
+              <p>© ${new Date().getFullYear()} Trading Bot. All rights reserved.</p>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  const msg = {
+    to: data.recipientEmail,
+    from: {
+      email: emailConfig.fromEmail,
+      name: emailConfig.fromName,
+    },
+    subject,
+    html,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Expiry reminder sent to ${data.recipientEmail}`);
+  } catch (error) {
+    console.error('❌ Failed to send expiry reminder:', error);
+    throw error;
+  }
+}
+
+
+
+
+interface ChannelApprovalData {
+  recipientName: string;
+  recipientEmail: string;
+  channelTitle: string;
+  approved: boolean;
+  rejectionReason?: string;
+}
+
+/**
+ * Send channel approval/rejection email
+ */
+async sendChannelApprovalEmail(data: ChannelApprovalData): Promise<void> {
+  if (!emailConfig.enabled || !emailConfig.apiKey) {
+    console.log('⚠️  Email notifications disabled');
+    return;
+  }
+
+  const subject = data.approved
+    ? `✅ Your channel request has been approved!`
+    : `❌ Your channel request was not approved`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { 
+            background: ${data.approved ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'}; 
+            color: white; 
+            padding: 30px; 
+            text-align: center; 
+            border-radius: 8px 8px 0 0; 
+          }
+          .content { background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+          .status-box { 
+            padding: 20px; 
+            border-radius: 6px; 
+            margin: 20px 0;
+            background: ${data.approved ? '#f0fdf4' : '#fef2f2'};
+            border-left: 4px solid ${data.approved ? '#10b981' : '#ef4444'};
+          }
+          .button { 
+            display: inline-block; 
+            padding: 12px 24px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            font-weight: bold; 
+            margin: 20px 0;
+          }
+          .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${data.approved ? '✅ Channel Approved!' : '❌ Channel Not Approved'}</h1>
+          </div>
+          <div class="content">
+            <p>Hi ${data.recipientName},</p>
+            
+            <div class="status-box">
+              <h3 style="margin-top: 0;">${data.channelTitle}</h3>
+              <p>
+                ${data.approved 
+                  ? 'Your channel request has been approved! The channel is now active and monitoring signals.' 
+                  : 'Unfortunately, your channel request was not approved at this time.'}
+              </p>
+              ${!data.approved && data.rejectionReason ? `
+                <p style="margin-top: 15px;">
+                  <strong>Reason:</strong> ${data.rejectionReason}
+                </p>
+              ` : ''}
+            </div>
+
+            ${data.approved ? `
+              <p>You can now subscribe to this channel and start receiving signals automatically.</p>
+              <center>
+                <a href="${process.env.FRONTEND_URL}/channels" class="button">
+                  View Channels
+                </a>
+              </center>
+            ` : `
+              <p>You can submit a new request with a different channel. Make sure the channel:</p>
+              <ul>
+                <li>Is a legitimate trading signal channel</li>
+                <li>Provides clear trading signals with entry, stop loss, and take profit levels</li>
+                <li>Has a good track record</li>
+              </ul>
+            `}
+
+            <div class="footer">
+              <p>Questions? Contact us at support@tradingbot.com</p>
+              <p>© ${new Date().getFullYear()} Trading Bot. All rights reserved.</p>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+
+  const msg = {
+    to: data.recipientEmail,
+    from: {
+      email: emailConfig.fromEmail,
+      name: emailConfig.fromName,
+    },
+    subject,
+    html,
+  };
+
+  try {
+    await sgMail.send(msg);
+    console.log(`✅ Channel ${data.approved ? 'approval' : 'rejection'} email sent to ${data.recipientEmail}`);
+  } catch (error) {
+    console.error('❌ Failed to send channel approval email:', error);
+    throw error;
+  }
+}

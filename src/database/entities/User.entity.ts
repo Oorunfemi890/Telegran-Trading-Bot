@@ -108,6 +108,27 @@ export class User {
   @OneToMany(() => AuditLog, (log) => log.user)
   auditLogs: AuditLog[];
 
+// Add these columns to User entity:
+
+@Column({ type: 'varchar', length: 20, nullable: true })
+phoneNumber: string | null;
+
+@Column({ type: 'varchar', length: 100, nullable: true })
+country: string | null;
+
+@Column({ type: 'varchar', length: 100, nullable: true })
+city: string | null;
+
+@Column({ type: 'varchar', length: 45, nullable: true })
+registrationIp: string | null;
+
+@Column({ type: 'jsonb', nullable: true })
+deviceInfo: {
+  userAgent?: string;
+  platform?: string;
+  browser?: string;
+} | null;
+
   // =============================================
   // METHODS
   // =============================================

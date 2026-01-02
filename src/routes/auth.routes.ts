@@ -28,6 +28,14 @@ router.post(
   (req, res) => authController.login(req, res)
 );
 
+// PUT /api/v1/auth/change-password
+router.put(
+  '/change-password',
+  authenticate,
+  authRateLimit,
+  (req, res) => authController.changePassword(req, res)
+);
+
 // POST /api/v1/auth/forgot-password
 router.post(
   '/forgot-password',

@@ -12,6 +12,8 @@ import { generateRandomToken } from "../helpers/encryption.helper";
 import { UserRole, UserStatus, SubscriptionTier } from "../types";
 import { EmailService } from "./email.service";
 import { getWebSocketServer } from "../helpers/../websocket/socket.server"; // ✅ ADD THIS IMPORT
+import { getLocationFromIP, parseUserAgent, getClientIP } from '../helpers/location.helper';
+
 
 export interface RegisterDTO {
   email: string;
@@ -243,6 +245,57 @@ export class AuthService {
     return true;
   }
 
+  /**
+ * Change user password
+ */
+async changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  const userRepo = AppDataSource.getRepository(User);
+
+  // Get user with password
+  const user = await userRepo.findOne({
+    where: { id: userId },
+    select: ['id', 'password'],
+  });
+
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  // Verify current password
+  const isValidPassword = await user.validatePassword(currentPassword);
+  if (!isValidPassword) {
+    throw new Error('Current password is incorrect');
+  }
+
+  // Validate new password strength
+  if (newPassword.length < 8) {
+    throw new Error('New password must be at least 8 characters long');
+  }
+
+  if (!/[A-Z]/.test(newPassword)) {
+    throw new Error('Password must contain at least one uppercase letter');
+  }
+
+  if (!/[a-z]/.test(newPassword)) {
+    throw new Error('Password must contain at least one lowercase letter');
+  }
+
+  if (!/[0-9]/.test(newPassword)) {
+    throw new Error('Password must contain at least one number');
+  }
+
+  if (!/[!@#$%^&*]/.test(newPassword)) {
+    throw new Error('Password must contain at least one special character');
+  }
+
+  // Update password
+  user.password = newPassword;
+  await userRepo.save(user);
+}
   /**
    * Get user profile
    */

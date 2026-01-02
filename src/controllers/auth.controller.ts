@@ -106,6 +106,43 @@ export class AuthController {
   }
 
   /**
+ * Change user password
+ * PUT /api/v1/auth/change-password
+ */
+async changePassword(req: Request, res: Response): Promise<void> {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      res.status(400).json({
+        success: false,
+        message: 'Current password and new password are required',
+      });
+      return;
+    }
+
+    if (!req.userId) {
+      res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+      return;
+    }
+
+    await authService.changePassword(req.userId, currentPassword, newPassword);
+
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully',
+    });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      message: error.message || 'Failed to change password',
+    });
+  }
+}
+  /**
    * Reset password
    * POST /api/v1/auth/reset-password
    */
