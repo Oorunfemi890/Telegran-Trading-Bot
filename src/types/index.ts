@@ -210,7 +210,9 @@ export enum EmailNotificationType {
   DAILY_REPORT = 'daily_report',
   ERROR_NOTIFICATION = 'error_notification',
   INVITATION_CODE = 'invitation_code',
-  WELCOME = 'welcome'
+  WELCOME = 'welcome',
+  SUBSCRIPTION_EXPIRY = 'subscription_expiry',
+  CHANNEL_APPROVAL = 'channel_approval'
 }
 
 export enum EmailDeliveryStatus {

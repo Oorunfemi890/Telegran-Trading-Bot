@@ -1,4 +1,4 @@
-// FILE: src/services/auth.service.ts
+// FILE: src/services/auth.service.ts (UPDATED WITH LOCATION TRACKING)
 // =============================================
 import AppDataSource from "../config/database.config";
 import { User } from "../database/entities/User.entity";
@@ -11,15 +11,17 @@ import {
 import { generateRandomToken } from "../helpers/encryption.helper";
 import { UserRole, UserStatus, SubscriptionTier } from "../types";
 import { EmailService } from "./email.service";
-import { getWebSocketServer } from "../helpers/../websocket/socket.server"; // ✅ ADD THIS IMPORT
+import { getWebSocketServer } from "../websocket/socket.server";
 import { getLocationFromIP, parseUserAgent, getClientIP } from '../helpers/location.helper';
-
 
 export interface RegisterDTO {
   email: string;
   fullName: string;
   password: string;
   invitationCode: string;
+  phoneNumber?: string;
+  country?: string;
+  req?: any; // Express request object for IP/device tracking
 }
 
 export interface LoginDTO {
@@ -40,7 +42,7 @@ export class AuthService {
   private emailService = new EmailService();
 
   /**
-   * Register a new user with invitation code
+   * Register a new user with invitation code (UPDATED)
    */
   async register(data: RegisterDTO): Promise<AuthResponse> {
     // Validate invitation code
@@ -69,7 +71,34 @@ export class AuthService {
       throw new Error("User with this email already exists");
     }
 
-    // Create user
+    // ✅ GET LOCATION DATA IF REQUEST OBJECT PROVIDED
+    let locationData: any = {};
+    let deviceInfo: any = null;
+
+    if (data.req) {
+      try {
+        const clientIP = getClientIP(data.req);
+        const userAgent = data.req.headers['user-agent'] || '';
+
+        console.log(`📍 Registration IP: ${clientIP}`);
+
+        // Get location from IP (if not localhost)
+        if (clientIP && clientIP !== 'Unknown' && !clientIP.includes('127.0.0.1') && !clientIP.includes('::1')) {
+          locationData = await getLocationFromIP(clientIP);
+          console.log('📍 Location data:', locationData);
+        }
+
+        // Parse device info
+        deviceInfo = parseUserAgent(userAgent);
+        deviceInfo.userAgent = userAgent;
+        console.log('📱 Device info:', deviceInfo);
+      } catch (error) {
+        console.error('⚠️  Failed to get location/device info:', error);
+        // Continue with registration even if location tracking fails
+      }
+    }
+
+    // Create user with location data
     const user = this.userRepo.create({
       email: data.email.toLowerCase(),
       fullName: data.fullName,
@@ -80,9 +109,17 @@ export class AuthService {
       invitation_code_id: invitation.id,
       emailVerified: true,
       subscriptionExpiresAt: this.calculateSubscriptionExpiry(invitation.tier),
+      // ✅ LOCATION & DEVICE TRACKING
+      phoneNumber: data.phoneNumber || null,
+      country: data.country || locationData.country || null,
+      city: locationData.city || null,
+      registrationIp: data.req ? getClientIP(data.req) : null,
+      deviceInfo: deviceInfo,
     });
 
     await this.userRepo.save(user);
+
+    console.log(`✅ User registered with location: ${user.country || 'Unknown'}, ${user.city || 'Unknown'}`);
 
     // Create default settings
     const settings = this.createDefaultSettings(user.id, invitation.tier);
@@ -92,7 +129,7 @@ export class AuthService {
     invitation.markAsUsed();
     await this.invitationRepo.save(invitation);
 
-    // ✅ EMIT WEBSOCKET EVENT TO ALL ADMINS (NEW USER REGISTERED)
+    // Emit WebSocket event to admins
     const wsServer = getWebSocketServer();
     if (wsServer) {
       wsServer.emitNewUserRegistration({
@@ -102,6 +139,9 @@ export class AuthService {
         tier: user.tier,
         createdAt: user.createdAt,
         invitationCode: invitation.code,
+        country: user.country,
+        city: user.city,
+        registrationIp: user.registrationIp,
       });
       console.log("📡 WebSocket: New user registration event sent to admins");
     }
@@ -143,9 +183,9 @@ export class AuthService {
   }
 
   /**
-   * Login existing user
+   * Login existing user (UPDATED)
    */
-  async login(data: LoginDTO): Promise<AuthResponse> {
+  async login(data: LoginDTO, req?: any): Promise<AuthResponse> {
     // Find user with password
     const user = await this.userRepo.findOne({
       where: { email: data.email.toLowerCase() },
@@ -167,8 +207,11 @@ export class AuthService {
       throw new Error("Your account is suspended or inactive");
     }
 
-    // Update last login
+    // Update last login with IP tracking
     user.lastLoginAt = new Date();
+    if (req) {
+      user.lastLoginIp = getClientIP(req);
+    }
     await this.userRepo.save(user);
 
     // Generate tokens
@@ -200,20 +243,16 @@ export class AuthService {
     });
 
     if (!user) {
-      // Don't reveal if email exists
       return "If your email is registered, you will receive a reset link";
     }
 
     const resetToken = generateRandomToken();
     const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + 1); // 1 hour expiry
+    expiresAt.setHours(expiresAt.getHours() + 1);
 
     user.passwordResetToken = resetToken;
     user.passwordResetExpiresAt = expiresAt;
     await this.userRepo.save(user);
-
-    // TODO: Send password reset email
-    // await this.emailService.sendPasswordResetEmail(user.email, resetToken);
 
     return resetToken;
   }
@@ -237,7 +276,7 @@ export class AuthService {
       throw new Error("Reset token has expired");
     }
 
-    user.password = newPassword; // Will be hashed by entity hook
+    user.password = newPassword;
     user.passwordResetToken = null;
     user.passwordResetExpiresAt = null;
     await this.userRepo.save(user);
@@ -246,56 +285,35 @@ export class AuthService {
   }
 
   /**
- * Change user password
- */
-async changePassword(
-  userId: string,
-  currentPassword: string,
-  newPassword: string
-): Promise<void> {
-  const userRepo = AppDataSource.getRepository(User);
+   * Change user password
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<void> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'password'],
+    });
 
-  // Get user with password
-  const user = await userRepo.findOne({
-    where: { id: userId },
-    select: ['id', 'password'],
-  });
+    if (!user) {
+      throw new Error('User not found');
+    }
 
-  if (!user) {
-    throw new Error('User not found');
+    const isValidPassword = await user.validatePassword(currentPassword);
+    if (!isValidPassword) {
+      throw new Error('Current password is incorrect');
+    }
+
+    if (newPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters long');
+    }
+
+    user.password = newPassword;
+    await this.userRepo.save(user);
   }
 
-  // Verify current password
-  const isValidPassword = await user.validatePassword(currentPassword);
-  if (!isValidPassword) {
-    throw new Error('Current password is incorrect');
-  }
-
-  // Validate new password strength
-  if (newPassword.length < 8) {
-    throw new Error('New password must be at least 8 characters long');
-  }
-
-  if (!/[A-Z]/.test(newPassword)) {
-    throw new Error('Password must contain at least one uppercase letter');
-  }
-
-  if (!/[a-z]/.test(newPassword)) {
-    throw new Error('Password must contain at least one lowercase letter');
-  }
-
-  if (!/[0-9]/.test(newPassword)) {
-    throw new Error('Password must contain at least one number');
-  }
-
-  if (!/[!@#$%^&*]/.test(newPassword)) {
-    throw new Error('Password must contain at least one special character');
-  }
-
-  // Update password
-  user.password = newPassword;
-  await userRepo.save(user);
-}
   /**
    * Get user profile
    */
@@ -317,11 +335,11 @@ async changePassword(
    */
   private calculateSubscriptionExpiry(tier: SubscriptionTier): Date | null {
     if (tier === SubscriptionTier.FREE) {
-      return null; // Free tier never expires
+      return null;
     }
 
     const expiry = new Date();
-    expiry.setMonth(expiry.getMonth() + 1); // 1 month subscription
+    expiry.setMonth(expiry.getMonth() + 1);
     return expiry;
   }
 
@@ -378,7 +396,7 @@ async changePassword(
         },
       ],
       allowedSymbols: ["EURUSD", "GBPUSD", "XAUUSD"],
-      tradingEnabled: false, // User must connect accounts first
+      tradingEnabled: false,
       emailNotificationsEnabled: true,
       tradeOpenedNotification: true,
       breakevenNotification: true,

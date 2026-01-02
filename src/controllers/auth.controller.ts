@@ -1,4 +1,4 @@
-// FILE: src/controllers/auth.controller.ts
+// FILE: src/controllers/auth.controller.ts (UPDATED)
 // =============================================
 import { Request, Response } from "express";
 import { AuthService } from "../services/auth.service";
@@ -7,27 +7,31 @@ const authService = new AuthService();
 
 export class AuthController {
   /**
-   * Register new user
+   * Register new user (UPDATED WITH LOCATION TRACKING)
    * POST /api/v1/auth/register
    */
   async register(req: Request, res: Response): Promise<void> {
     try {
-      const { email, fullName, password, invitationCode } = req.body;
+      const { email, fullName, password, invitationCode, phoneNumber, country } = req.body;
 
       // Validate input
       if (!email || !fullName || !password || !invitationCode) {
         res.status(400).json({
           success: false,
-          message: "All fields are required",
+          message: "All required fields must be provided",
         });
         return;
       }
 
+      // ✅ Pass request object for IP/device tracking
       const result = await authService.register({
         email,
         fullName,
         password,
         invitationCode,
+        phoneNumber,
+        country,
+        req, // Pass entire request object
       });
 
       res.status(201).json({
@@ -44,7 +48,7 @@ export class AuthController {
   }
 
   /**
-   * Login user
+   * Login user (UPDATED WITH IP TRACKING)
    * POST /api/v1/auth/login
    */
   async login(req: Request, res: Response): Promise<void> {
@@ -59,7 +63,8 @@ export class AuthController {
         return;
       }
 
-      const result = await authService.login({ email, password });
+      // ✅ Pass request object for IP tracking
+      const result = await authService.login({ email, password }, req);
 
       res.status(200).json({
         success: true,
@@ -106,42 +111,43 @@ export class AuthController {
   }
 
   /**
- * Change user password
- * PUT /api/v1/auth/change-password
- */
-async changePassword(req: Request, res: Response): Promise<void> {
-  try {
-    const { currentPassword, newPassword } = req.body;
+   * Change user password
+   * PUT /api/v1/auth/change-password
+   */
+  async changePassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { currentPassword, newPassword } = req.body;
 
-    if (!currentPassword || !newPassword) {
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({
+          success: false,
+          message: 'Current password and new password are required',
+        });
+        return;
+      }
+
+      if (!req.userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
+        return;
+      }
+
+      await authService.changePassword(req.userId, currentPassword, newPassword);
+
+      res.status(200).json({
+        success: true,
+        message: 'Password changed successfully',
+      });
+    } catch (error: any) {
       res.status(400).json({
         success: false,
-        message: 'Current password and new password are required',
+        message: error.message || 'Failed to change password',
       });
-      return;
     }
-
-    if (!req.userId) {
-      res.status(401).json({
-        success: false,
-        message: 'Unauthorized',
-      });
-      return;
-    }
-
-    await authService.changePassword(req.userId, currentPassword, newPassword);
-
-    res.status(200).json({
-      success: true,
-      message: 'Password changed successfully',
-    });
-  } catch (error: any) {
-    res.status(400).json({
-      success: false,
-      message: error.message || 'Failed to change password',
-    });
   }
-}
+
   /**
    * Reset password
    * POST /api/v1/auth/reset-password

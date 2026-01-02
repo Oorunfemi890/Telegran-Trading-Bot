@@ -1,4 +1,4 @@
-// FILE: src/templates/email.templates.ts
+// FILE: src/templates/email.templates.ts (UPDATED WITH ALL TEMPLATES)
 // =============================================
 // Re-export all email templates from individual files
 
@@ -37,5 +37,17 @@ export {
   TradeCompletedData 
 } from './trade-completed.template';
 
-// Daily report template will be added in Phase 10
-// export { generateDailyReportEmail, DailyReportData } from './daily-report.template';
+export { 
+  generateSubscriptionExpiryEmail, 
+  SubscriptionExpiryData 
+} from './subscription-expiry.template';
+
+export { 
+  generateChannelApprovalEmail, 
+  ChannelApprovalData 
+} from './channel-approval.template';
+
+export { 
+  generateDailyReportEmail, 
+  DailyReportData 
+} from './daily-report.template';
