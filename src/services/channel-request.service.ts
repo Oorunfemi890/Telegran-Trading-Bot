@@ -1,11 +1,12 @@
 // ===================================================
-// FILE: src/services/channel-request.service.ts (NEW)
+// FILE: src/services/channel-request.service.ts (UPDATED WITH WEBSOCKET)
 // ===================================================
 
 import AppDataSource from '../config/database.config';
 import { ChannelRequest, ChannelRequestStatus } from '../database/entities/ChannelRequest.entity';
 import { TelegramChannel } from '../database/entities/TelegramChannel.entity';
 import { EmailService } from './email.service';
+import { getWebSocketServer } from '../websocket/socket.server';
 
 export class ChannelRequestService {
   private requestRepo = AppDataSource.getRepository(ChannelRequest);
@@ -21,6 +22,7 @@ export class ChannelRequestService {
     channelUsername?: string;
     channelTitle: string;
     channelDescription?: string;
+    telegramLink?: string;
     reason: string;
   }): Promise<ChannelRequest> {
     // Check if channel already exists
@@ -56,6 +58,22 @@ export class ChannelRequestService {
     });
 
     await this.requestRepo.save(request);
+
+    // ✅ EMIT WEBSOCKET EVENT TO ALL ADMINS
+    const wsServer = getWebSocketServer();
+    if (wsServer) {
+      wsServer.emitToAdmins('channel:request:new', {
+        type: 'channel_request_submitted',
+        request: {
+          id: request.id,
+          channelTitle: request.channelTitle,
+          channelUsername: request.channelUsername,
+          reason: request.reason,
+          createdAt: request.createdAt,
+        },
+        timestamp: new Date(),
+      });
+    }
 
     return request;
   }
@@ -142,6 +160,38 @@ export class ChannelRequestService {
       approved: true,
     });
 
+    // ✅ EMIT WEBSOCKET EVENT TO USER
+    const wsServer = getWebSocketServer();
+    if (wsServer) {
+      wsServer.emitToUser(request.user_id, 'channel:request:approved', {
+        type: 'channel_request_approved',
+        channelTitle: request.channelTitle,
+        channelId: channel.id,
+        timestamp: new Date(),
+      });
+
+      // ✅ EMIT TO ALL ADMINS (TO UPDATE THEIR NOTIFICATION COUNT)
+      wsServer.emitToAdmins('channel:request:processed', {
+        type: 'channel_request_approved',
+        requestId: request.id,
+        channelTitle: request.channelTitle,
+        timestamp: new Date(),
+      });
+
+      // ✅ BROADCAST NEW CHANNEL TO ALL USERS
+      wsServer.broadcast('channel:added', {
+        type: 'channel_added',
+        channel: {
+          id: channel.id,
+          channelId: channel.channelId,
+          title: channel.title,
+          username: channel.username,
+          description: channel.description,
+        },
+        timestamp: new Date(),
+      });
+    }
+
     return { request, channel };
   }
 
@@ -181,6 +231,25 @@ export class ChannelRequestService {
       approved: false,
       rejectionReason,
     });
+
+    // ✅ EMIT WEBSOCKET EVENT TO USER
+    const wsServer = getWebSocketServer();
+    if (wsServer) {
+      wsServer.emitToUser(request.user_id, 'channel:request:rejected', {
+        type: 'channel_request_rejected',
+        channelTitle: request.channelTitle,
+        rejectionReason,
+        timestamp: new Date(),
+      });
+
+      // ✅ EMIT TO ALL ADMINS (TO UPDATE THEIR NOTIFICATION COUNT)
+      wsServer.emitToAdmins('channel:request:processed', {
+        type: 'channel_request_rejected',
+        requestId: request.id,
+        channelTitle: request.channelTitle,
+        timestamp: new Date(),
+      });
+    }
 
     return request;
   }

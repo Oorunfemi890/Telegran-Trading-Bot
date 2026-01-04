@@ -1,18 +1,25 @@
-// =============================================
+// ===================================================
 // FILE: src/middleware/auth.middleware.ts
-// =============================================
+// FIX: Always fetch user role from database, not JWT
+// ===================================================
+
 import { Request, Response, NextFunction } from 'express';
-import { verifyAccessToken } from '../helpers/jwt.helper';
-import { JWTPayload } from '../types';
-import AppDataSource from '../database/data-source';
+import jwt from 'jsonwebtoken';
+import AppDataSource from '../config/database.config';
 import { User } from '../database/entities/User.entity';
 
-// Extend Express Request to include user
+interface JwtPayload {
+  userId: string;
+  email: string;
+  role: string;
+}
+
 declare global {
   namespace Express {
     interface Request {
-      user?: JWTPayload;
       userId?: string;
+      userRole?: string;
+      user?: User;
     }
   }
 }
@@ -23,23 +30,23 @@ export const authenticate = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // Get token from header
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       res.status(401).json({
         success: false,
-        message: 'No token provided',
+        message: 'No authentication token provided',
       });
       return;
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    const token = authHeader.substring(7);
+    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
 
-    // Verify token
-    const decoded = verifyAccessToken(token);
-    
-    // Check if user still exists
+    const decoded = jwt.verify(token, jwtSecret) as JwtPayload;
+
+    // ✅ IMPORTANT: Fetch user from database to get current role
+    // This ensures we always have the latest role, not stale JWT data
     const userRepo = AppDataSource.getRepository(User);
     const user = await userRepo.findOne({
       where: { id: decoded.userId },
@@ -53,47 +60,43 @@ export const authenticate = async (
       return;
     }
 
-    // Check if user is active
-    if (!user.isActive()) {
+    if (user.status !== 'active') {
       res.status(403).json({
         success: false,
-        message: 'Account is suspended or inactive',
+        message: 'Account is not active',
       });
       return;
     }
 
-    // Attach user info to request
-    req.user = decoded;
-    req.userId = decoded.userId;
-    
-    next();
-  } catch (error) {
-    res.status(401).json({
-      success: false,
-      message: 'Invalid or expired token',
-    });
-  }
-};
+    // ✅ Attach user info to request - using database role
+    req.userId = user.id;
+    req.userRole = user.role; // This is from database, not JWT
+    req.user = user;
 
-// Optional authentication (doesn't fail if no token)
-export const optionalAuthenticate = async (
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      const decoded = verifyAccessToken(token);
-      req.user = decoded;
-      req.userId = decoded.userId;
-    }
-    
+    console.log(`✅ Auth: ${user.email} (Role: ${user.role})`);
+
     next();
   } catch (error) {
-    // Token invalid, but continue anyway
-    next();
+    if (error instanceof jwt.TokenExpiredError) {
+      res.status(401).json({
+        success: false,
+        message: 'Token has expired',
+      });
+      return;
+    }
+
+    if (error instanceof jwt.JsonWebTokenError) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid token',
+      });
+      return;
+    }
+
+    console.error('Authentication error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Authentication error',
+    });
   }
 };
