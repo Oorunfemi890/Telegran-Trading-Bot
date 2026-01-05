@@ -1,12 +1,9 @@
-// FILE: src/websocket/socket.server.ts
-// =============================================
-// PHASE 12: WEBSOCKET REAL-TIME SERVER
+// FILE: src/websocket/socket.server.ts (UPDATED WITH CHANNEL REQUEST EVENTS)
 // =============================================
 
 import { Server as HTTPServer } from 'http';
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { verifyAccessToken } from '../helpers/jwt.helper';
-import { JWTPayload } from '../types';
 
 export interface AuthenticatedSocket extends Socket {
   userId?: string;
@@ -16,7 +13,7 @@ export interface AuthenticatedSocket extends Socket {
 
 export class WebSocketServer {
   private io: SocketIOServer;
-  private connectedUsers: Map<string, string> = new Map(); // userId -> socketId
+  private connectedUsers: Map<string, string> = new Map();
 
   constructor(httpServer: HTTPServer) {
     this.io = new SocketIOServer(httpServer, {
@@ -34,9 +31,6 @@ export class WebSocketServer {
     console.log('✅ WebSocket server initialized');
   }
 
-  /**
-   * Setup authentication middleware
-   */
   private setupMiddleware() {
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
@@ -60,53 +54,40 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Setup event handlers
-   */
   private setupEventHandlers() {
     this.io.on('connection', (socket: AuthenticatedSocket) => {
       this.handleConnection(socket);
     });
   }
 
-  /**
-   * Handle new connection
-   */
   private handleConnection(socket: AuthenticatedSocket) {
     const userId = socket.userId!;
 
     console.log(`✅ User connected: ${socket.userEmail} (${socket.id})`);
 
-    // Store connection
     this.connectedUsers.set(userId, socket.id);
-
-    // Join user-specific room
     socket.join(`user:${userId}`);
 
-    // Join role-specific rooms
     if (socket.userRole === 'admin' || socket.userRole === 'super_admin') {
       socket.join('admins');
+      console.log(`✅ Admin joined admin room: ${socket.userEmail}`);
     }
 
-    // Send connection confirmation
     socket.emit('connected', {
       userId,
       socketId: socket.id,
       timestamp: new Date(),
     });
 
-    // Handle disconnection
     socket.on('disconnect', () => {
       console.log(`❌ User disconnected: ${socket.userEmail}`);
       this.connectedUsers.delete(userId);
     });
 
-    // Handle ping/pong
     socket.on('ping', () => {
       socket.emit('pong', { timestamp: new Date() });
     });
 
-    // Subscribe to specific events
     socket.on('subscribe', (channel: string) => {
       socket.join(channel);
       socket.emit('subscribed', { channel });
@@ -118,62 +99,117 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit to specific user
-   */
   emitToUser(userId: string, event: string, data: any) {
     this.io.to(`user:${userId}`).emit(event, data);
   }
 
-  /**
-   * Emit to all admins
-   */
   emitToAdmins(event: string, data: any) {
+    console.log(`📡 Broadcasting to admins: ${event}`, data);
     this.io.to('admins').emit(event, data);
   }
 
-  /**
-   * Emit to all connected clients
-   */
   broadcast(event: string, data: any) {
     this.io.emit(event, data);
   }
 
-  /**
-   * Emit to specific room
-   */
   emitToRoom(room: string, event: string, data: any) {
     this.io.to(room).emit(event, data);
   }
 
-  /**
-   * Get connected users count
-   */
   getConnectedUsersCount(): number {
     return this.connectedUsers.size;
   }
 
-  /**
-   * Check if user is connected
-   */
   isUserConnected(userId: string): boolean {
     return this.connectedUsers.has(userId);
   }
 
-  /**
-   * Get socket instance
-   */
   getIO(): SocketIOServer {
     return this.io;
   }
 
   // =============================================
-  // REAL-TIME EVENT EMITTERS
+  // CHANNEL REQUEST EVENTS (NEW)
   // =============================================
 
   /**
-   * Emit trade opened event
+   * Emit new channel request to all admins
    */
+  emitNewChannelRequest(request: any) {
+    console.log('📡 Emitting new channel request to admins:', request.channelTitle);
+    this.emitToAdmins('channel:request:new', {
+      type: 'channel_request_submitted',
+      request: {
+        id: request.id,
+        channelTitle: request.channelTitle,
+        channelUsername: request.channelUsername,
+        reason: request.reason,
+        user: {
+          fullName: request.user?.fullName,
+          email: request.user?.email,
+        },
+        createdAt: request.createdAt,
+      },
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Emit channel request approved to user
+   */
+  emitChannelRequestApproved(userId: string, channelTitle: string, channelId: string) {
+    this.emitToUser(userId, 'channel:request:approved', {
+      type: 'channel_request_approved',
+      channelTitle,
+      channelId,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Emit channel request rejected to user
+   */
+  emitChannelRequestRejected(userId: string, channelTitle: string, rejectionReason?: string) {
+    this.emitToUser(userId, 'channel:request:rejected', {
+      type: 'channel_request_rejected',
+      channelTitle,
+      rejectionReason,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Emit channel request processed to admins (to update their count)
+   */
+  emitChannelRequestProcessed(requestId: string, approved: boolean) {
+    this.emitToAdmins('channel:request:processed', {
+      type: approved ? 'channel_request_approved' : 'channel_request_rejected',
+      requestId,
+      timestamp: new Date(),
+    });
+  }
+
+  /**
+   * Emit new channel added to all users
+   */
+  emitChannelAdded(channel: any) {
+    this.broadcast('channel:added', {
+      type: 'channel_added',
+      channel: {
+        id: channel.id,
+        channelId: channel.channelId,
+        title: channel.title,
+        username: channel.username,
+        description: channel.description,
+      },
+      timestamp: new Date(),
+    });
+  }
+
+  // =============================================
+  // EXISTING TRADE EVENTS
+  // =============================================
+
   emitTradeOpened(userId: string, trade: any) {
     this.emitToUser(userId, 'trade:opened', {
       type: 'trade_opened',
@@ -182,9 +218,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit breakeven activated
-   */
   emitBreakevenActivated(userId: string, trade: any) {
     this.emitToUser(userId, 'trade:breakeven', {
       type: 'breakeven_activated',
@@ -193,9 +226,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit take profit hit
-   */
   emitTakeProfitHit(userId: string, trade: any, tpLevel: number) {
     this.emitToUser(userId, 'trade:takeprofit', {
       type: 'take_profit_hit',
@@ -205,9 +235,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit stop loss hit
-   */
   emitStopLossHit(userId: string, trade: any) {
     this.emitToUser(userId, 'trade:stoploss', {
       type: 'stop_loss_hit',
@@ -216,9 +243,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit trade completed
-   */
   emitTradeCompleted(userId: string, trade: any) {
     this.emitToUser(userId, 'trade:completed', {
       type: 'trade_completed',
@@ -227,9 +251,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit signal detected
-   */
   emitSignalDetected(userId: string, signal: any) {
     this.emitToUser(userId, 'signal:detected', {
       type: 'signal_detected',
@@ -238,9 +259,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit position update
-   */
   emitPositionUpdate(userId: string, position: any) {
     this.emitToUser(userId, 'position:updated', {
       type: 'position_update',
@@ -249,9 +267,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit account balance update
-   */
   emitBalanceUpdate(userId: string, balance: any) {
     this.emitToUser(userId, 'account:balance', {
       type: 'balance_update',
@@ -260,9 +275,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit system notification
-   */
   emitSystemNotification(userId: string, notification: any) {
     this.emitToUser(userId, 'system:notification', {
       type: 'system_notification',
@@ -271,9 +283,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit admin notification
-   */
   emitAdminNotification(notification: any) {
     this.emitToAdmins('admin:notification', {
       type: 'admin_notification',
@@ -282,9 +291,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit new user registration (to admins)
-   */
   emitNewUserRegistration(user: any) {
     this.emitToAdmins('admin:newuser', {
       type: 'new_user',
@@ -293,9 +299,6 @@ export class WebSocketServer {
     });
   }
 
-  /**
-   * Emit system metrics update (to admins)
-   */
   emitSystemMetrics(metrics: any) {
     this.emitToAdmins('admin:metrics', {
       type: 'system_metrics',

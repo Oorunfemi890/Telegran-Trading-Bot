@@ -1,5 +1,5 @@
 // ===================================================
-// FILE: src/services/channel-request.service.ts (UPDATED WITH WEBSOCKET)
+// FILE: src/services/channel-request.service.ts (FIXED)
 // ===================================================
 
 import AppDataSource from '../config/database.config';
@@ -25,15 +25,8 @@ export class ChannelRequestService {
     telegramLink?: string;
     reason: string;
   }): Promise<ChannelRequest> {
-    // Check if channel already exists
-    const existingChannel = await this.channelRepo.findOne({
-      where: { channelId: data.channelId },
-    });
-
-    if (existingChannel) {
-      throw new Error('This channel is already in the system');
-    }
-
+    // ✅ REMOVED: Check if channel already exists - allow requests anyway
+    
     // Check if user already has pending request for this channel
     const existingRequest = await this.requestRepo.findOne({
       where: {
@@ -68,18 +61,20 @@ export class ChannelRequestService {
           id: request.id,
           channelTitle: request.channelTitle,
           channelUsername: request.channelUsername,
+          channelId: request.channelId,
           reason: request.reason,
           createdAt: request.createdAt,
         },
         timestamp: new Date(),
       });
+      console.log('📡 WebSocket: Channel request notification sent to admins');
     }
 
     return request;
   }
 
   /**
-   * Get all channel requests (Admin)
+   * Get all channel requests (Admin) - ✅ FETCH ALL, NOT JUST PENDING
    */
   async getAllRequests(filters?: {
     status?: ChannelRequestStatus;
@@ -133,17 +128,27 @@ export class ChannelRequestService {
       throw new Error('Request has already been reviewed');
     }
 
-    // Create the channel
-    const channel = this.channelRepo.create({
-      channelId: request.channelId,
-      username: request.channelUsername,
-      title: request.channelTitle,
-      description: request.channelDescription,
-      isPublic: true,
-      isActive: true,
+    // ✅ CHECK IF CHANNEL ALREADY EXISTS BEFORE CREATING
+    let channel = await this.channelRepo.findOne({
+      where: { channelId: request.channelId },
     });
 
-    await this.channelRepo.save(channel);
+    if (!channel) {
+      // Create the channel if it doesn't exist
+      channel = this.channelRepo.create({
+        channelId: request.channelId,
+        username: request.channelUsername,
+        title: request.channelTitle,
+        description: request.channelDescription,
+        isPublic: true,
+        isActive: true,
+      });
+
+      await this.channelRepo.save(channel);
+      console.log('✅ New channel created:', channel.title);
+    } else {
+      console.log('ℹ️ Channel already exists, marking request as approved:', channel.title);
+    }
 
     // Update request
     request.status = ChannelRequestStatus.APPROVED;
@@ -178,18 +183,20 @@ export class ChannelRequestService {
         timestamp: new Date(),
       });
 
-      // ✅ BROADCAST NEW CHANNEL TO ALL USERS
-      wsServer.broadcast('channel:added', {
-        type: 'channel_added',
-        channel: {
-          id: channel.id,
-          channelId: channel.channelId,
-          title: channel.title,
-          username: channel.username,
-          description: channel.description,
-        },
-        timestamp: new Date(),
-      });
+      // ✅ BROADCAST NEW CHANNEL TO ALL USERS (only if newly created)
+      if (!channel) {
+        wsServer.broadcast('channel:added', {
+          type: 'channel_added',
+          channel: {
+            id: channel!.id,
+            channelId: channel!.channelId,
+            title: channel!.title,
+            username: channel!.username,
+            description: channel!.description,
+          },
+          timestamp: new Date(),
+        });
+      }
     }
 
     return { request, channel };
