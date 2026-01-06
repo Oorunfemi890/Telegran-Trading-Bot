@@ -2,8 +2,8 @@
 // FILE: src/controllers/channel-request.controller.ts (NEW)
 // ===================================================
 
-import { Request, Response } from 'express';
-import { ChannelRequestService } from '../services/channel-request.service';
+import { Request, Response } from "express";
+import { ChannelRequestService } from "../services/channel-request.service";
 
 const channelRequestService = new ChannelRequestService();
 
@@ -18,7 +18,7 @@ export class ChannelRequestController {
 
       res.status(201).json({
         success: true,
-        message: 'Channel request submitted successfully',
+        message: "Channel request submitted successfully",
         data: request,
       });
     } catch (error: any) {
@@ -66,14 +66,25 @@ export class ChannelRequestController {
 
   async approveRequest(req: Request, res: Response): Promise<void> {
     try {
+      // ✅ ACCEPT EDITED DATA FROM REQUEST BODY
+      const editedData = req.body.editedData
+        ? {
+            channelTitle: req.body.editedData.channelTitle,
+            channelUsername: req.body.editedData.channelUsername,
+            channelDescription: req.body.editedData.channelDescription,
+            channelId: req.body.editedData.channelId,
+          }
+        : undefined;
+
       const result = await channelRequestService.approveRequest(
         req.params.id,
-        req.userId!
+        req.userId!,
+        editedData // ✅ PASS EDITED DATA
       );
 
       res.json({
         success: true,
-        message: 'Channel request approved',
+        message: "Channel request approved",
         data: result,
       });
     } catch (error: any) {
@@ -94,7 +105,7 @@ export class ChannelRequestController {
 
       res.json({
         success: true,
-        message: 'Channel request rejected',
+        message: "Channel request rejected",
         data: request,
       });
     } catch (error: any) {
