@@ -12,7 +12,7 @@ import {
   calculateExpiryDate 
 } from '../../helpers/invitation.helper';
 import { EmailService } from '../email.service';
-import { Between, Like, In } from 'typeorm';
+import { Between, In } from 'typeorm';
 
 export interface CreateInvitationDTO {
   tier: SubscriptionTier;

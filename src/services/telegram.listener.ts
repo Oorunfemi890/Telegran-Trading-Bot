@@ -62,7 +62,6 @@ export class TelegramListenerService {
           useWSS: true,
           requestRetries: 5,
           autoReconnect: true,
-          connectionTimeout: 10000,
         }
       );
 

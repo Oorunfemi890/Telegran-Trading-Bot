@@ -11,7 +11,7 @@ const metricsService = new SystemMetricsService();
 router.use(authenticate, requireAdmin);
 
 // GET /api/v1/admin/system/metrics
-router.get('/metrics', async (req: Request, res: Response) => {
+router.get('/metrics', async (_req: Request, res: Response) => {
   try {
     const metrics = await metricsService.getSystemMetrics();
     res.json({ success: true, data: metrics });
@@ -21,7 +21,7 @@ router.get('/metrics', async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/admin/system/queues
-router.get('/queues', async (req: Request, res: Response) => {
+router.get('/queues', async (_req: Request, res: Response) => {
   try {
     const queues = await metricsService.getQueueStatistics();
     res.json({ success: true, data: queues });
@@ -31,7 +31,7 @@ router.get('/queues', async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/admin/system/health
-router.get('/health', async (req: Request, res: Response) => {
+router.get('/health', async (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {

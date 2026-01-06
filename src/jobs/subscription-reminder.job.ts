@@ -1,4 +1,5 @@
 import { CronJob } from 'cron';
+import { SubscriptionTier, UserStatus } from '../types';
 import AppDataSource from '../config/database.config';
 import { User } from '../database/entities/User.entity';
 import { EmailService } from '../services/email.service';
@@ -25,12 +26,12 @@ async function checkExpiringSubscriptions() {
     const oneDayFromNow = new Date(now);
     oneDayFromNow.setDate(oneDayFromNow.getDate() + 1);
 
-    // Find users with subscriptions expiring in 7 days
+      // Find users with subscriptions expiring in 7 days
     const expiringIn7Days = await userRepo.find({
       where: {
         subscriptionExpiresAt: Between(now, oneWeekFromNow),
-        status: 'active',
-        tier: Not('free'),
+        status: UserStatus.ACTIVE as any,
+        tier: Not(SubscriptionTier.FREE as any),
       },
     });
 
@@ -38,8 +39,8 @@ async function checkExpiringSubscriptions() {
     const expiringIn3Days = await userRepo.find({
       where: {
         subscriptionExpiresAt: Between(now, threeDaysFromNow),
-        status: 'active',
-        tier: Not('free'),
+        status: UserStatus.ACTIVE as any,
+        tier: Not(SubscriptionTier.FREE as any),
       },
     });
 
@@ -47,8 +48,8 @@ async function checkExpiringSubscriptions() {
     const expiringTomorrow = await userRepo.find({
       where: {
         subscriptionExpiresAt: Between(now, oneDayFromNow),
-        status: 'active',
-        tier: Not('free'),
+        status: UserStatus.ACTIVE as any,
+        tier: Not(SubscriptionTier.FREE as any),
       },
     });
 

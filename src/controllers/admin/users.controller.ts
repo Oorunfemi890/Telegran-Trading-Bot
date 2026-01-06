@@ -178,7 +178,7 @@ export class AdminUsersController {
     }
   }
 
-  async getSystemStatistics(req: Request, res: Response): Promise<void> {
+  async getSystemStatistics(_req: Request, res: Response): Promise<void> {
     try {
       const stats = await userService.getSystemStatistics();
 

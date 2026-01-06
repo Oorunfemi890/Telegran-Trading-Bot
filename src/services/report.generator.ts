@@ -7,7 +7,7 @@ import AppDataSource from "../config/database.config";
 import { DailyReport } from "../database/entities/DailyReport.entity";
 import { Trade } from "../database/entities/Trade.entity";
 import { User } from "../database/entities/User.entity";
-import { Signal } from "../database/entities/Signal.entity";
+// import { Signal } from "../database/entities/Signal.entity";
 import { TradeStatus } from "../types";
 import { Between } from "typeorm";
 import { EmailService } from "./email.service";
@@ -269,7 +269,7 @@ export class ReportGeneratorService {
   /**
    * Generate insights
    */
-  private generateInsights(stats: ReportStatistics, trades: Trade[]): string[] {
+private generateInsights(stats: ReportStatistics, _trades: Trade[]): string[] {
     const insights: string[] = [];
 
     // Win rate insight
@@ -312,7 +312,7 @@ export class ReportGeneratorService {
    */
   private generateRecommendations(
     stats: ReportStatistics,
-    trades: Trade[]
+    _trades: Trade[]
   ): string[] {
     const recommendations: string[] = [];
 

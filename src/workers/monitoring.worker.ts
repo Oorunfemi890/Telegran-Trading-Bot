@@ -46,7 +46,7 @@ export class MonitoringWorker {
       }
     );
 
-    this.worker.on('completed', (job) => {
+    this.worker.on('completed', (_job) => {
       // Silent success
     });
 

@@ -144,7 +144,7 @@ export class AdminInvitationController {
     }
   }
 
-  async getStatistics(req: Request, res: Response): Promise<void> {
+  async getStatistics(_req: Request, res: Response): Promise<void> {
     try {
       const stats = await invitationService.getStatistics();
 

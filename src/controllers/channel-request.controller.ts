@@ -116,7 +116,7 @@ export class ChannelRequestController {
     }
   }
 
-  async getPendingCount(req: Request, res: Response): Promise<void> {
+  async getPendingCount(_req: Request, res: Response): Promise<void> {
     try {
       const count = await channelRequestService.getPendingCount();
 

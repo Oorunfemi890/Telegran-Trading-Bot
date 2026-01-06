@@ -3,12 +3,17 @@
 // PHASE 11: ADMIN USER MANAGEMENT SERVICE
 // =============================================
 
-import AppDataSource from '../../config/database.config';
-import { User } from '../../database/entities/User.entity';
-import { UserSettings } from '../../database/entities/UserSettings.entity';
-import { Trade } from '../../database/entities/Trade.entity';
-import { UserRole, UserStatus, SubscriptionTier, TradeStatus } from '../../types';
-import { Between, Like, In } from 'typeorm';
+import AppDataSource from "../../config/database.config";
+import { User } from "../../database/entities/User.entity";
+import { UserSettings } from "../../database/entities/UserSettings.entity";
+import { Trade } from "../../database/entities/Trade.entity";
+import {
+  UserRole,
+  UserStatus,
+  SubscriptionTier,
+  TradeStatus,
+} from "../../types";
+import { Between, Like, In } from "typeorm";
 
 export interface UserFilters {
   status?: UserStatus;
@@ -43,32 +48,32 @@ export class AdminUserManagementService {
     limit: number = 50
   ) {
     const query = this.userRepo
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.settings', 'settings')
-      .leftJoinAndSelect('user.invitationCode', 'invitationCode');
+      .createQueryBuilder("user")
+      .leftJoinAndSelect("user.settings", "settings")
+      .leftJoinAndSelect("user.invitationCode", "invitationCode");
 
     // Apply filters
     if (filters.status) {
-      query.andWhere('user.status = :status', { status: filters.status });
+      query.andWhere("user.status = :status", { status: filters.status });
     }
 
     if (filters.tier) {
-      query.andWhere('user.tier = :tier', { tier: filters.tier });
+      query.andWhere("user.tier = :tier", { tier: filters.tier });
     }
 
     if (filters.role) {
-      query.andWhere('user.role = :role', { role: filters.role });
+      query.andWhere("user.role = :role", { role: filters.role });
     }
 
     if (filters.search) {
       query.andWhere(
-        '(user.fullName LIKE :search OR user.email LIKE :search)',
+        "(user.fullName LIKE :search OR user.email LIKE :search)",
         { search: `%${filters.search}%` }
       );
     }
 
     if (filters.dateFrom && filters.dateTo) {
-      query.andWhere('user.createdAt BETWEEN :dateFrom AND :dateTo', {
+      query.andWhere("user.createdAt BETWEEN :dateFrom AND :dateTo", {
         dateFrom: filters.dateFrom,
         dateTo: filters.dateTo,
       });
@@ -77,12 +82,12 @@ export class AdminUserManagementService {
     if (filters.hasActiveSubscription !== undefined) {
       if (filters.hasActiveSubscription) {
         query.andWhere(
-          '(user.subscriptionExpiresAt IS NULL OR user.subscriptionExpiresAt > :now)',
+          "(user.subscriptionExpiresAt IS NULL OR user.subscriptionExpiresAt > :now)",
           { now: new Date() }
         );
       } else {
         query.andWhere(
-          'user.subscriptionExpiresAt IS NOT NULL AND user.subscriptionExpiresAt <= :now',
+          "user.subscriptionExpiresAt IS NOT NULL AND user.subscriptionExpiresAt <= :now",
           { now: new Date() }
         );
       }
@@ -93,7 +98,7 @@ export class AdminUserManagementService {
 
     // Pagination
     const users = await query
-      .orderBy('user.createdAt', 'DESC')
+      .orderBy("user.createdAt", "DESC")
       .skip((page - 1) * limit)
       .take(limit)
       .getMany();
@@ -115,11 +120,11 @@ export class AdminUserManagementService {
   async getUserById(id: string): Promise<User> {
     const user = await this.userRepo.findOne({
       where: { id },
-      relations: ['settings', 'invitationCode', 'tradingAccounts', 'trades'],
+      relations: ["settings", "invitationCode", "tradingAccounts", "trades"],
     });
 
     if (!user) {
-      throw new Error('User not found');
+      throw new Error("User not found");
     }
 
     return user;
@@ -141,7 +146,7 @@ export class AdminUserManagementService {
   /**
    * Suspend user account
    */
-  async suspendUser(id: string, reason?: string): Promise<User> {
+  async suspendUser(id: string, _reason?: string): Promise<User> {
     const user = await this.getUserById(id);
 
     user.status = UserStatus.SUSPENDED;
@@ -182,10 +187,7 @@ export class AdminUserManagementService {
   /**
    * Extend user subscription
    */
-  async extendSubscription(
-    id: string,
-    days: number
-  ): Promise<User> {
+  async extendSubscription(id: string, days: number): Promise<User> {
     const user = await this.getUserById(id);
 
     const currentExpiry = user.subscriptionExpiresAt || new Date();
@@ -201,10 +203,7 @@ export class AdminUserManagementService {
   /**
    * Change user tier
    */
-  async changeUserTier(
-    id: string,
-    newTier: SubscriptionTier
-  ): Promise<User> {
+  async changeUserTier(id: string, newTier: SubscriptionTier): Promise<User> {
     const user = await this.getUserById(id);
 
     user.tier = newTier;
@@ -261,21 +260,22 @@ export class AdminUserManagementService {
     const user = await this.getUserById(id);
 
     // Get trade statistics
-    const [
-      totalTrades,
-      openTrades,
-      closedTrades,
-      trades,
-    ] = await Promise.all([
+    const [totalTrades, openTrades, closedTrades, trades] = await Promise.all([
       this.tradeRepo.count({ where: { user_id: id } }),
-      this.tradeRepo.count({ where: { user_id: id, status: TradeStatus.OPEN } }),
-      this.tradeRepo.count({ where: { user_id: id, status: TradeStatus.CLOSED } }),
-      this.tradeRepo.find({ where: { user_id: id, status: TradeStatus.CLOSED } }),
+      this.tradeRepo.count({
+        where: { user_id: id, status: TradeStatus.OPEN },
+      }),
+      this.tradeRepo.count({
+        where: { user_id: id, status: TradeStatus.CLOSED },
+      }),
+      this.tradeRepo.find({
+        where: { user_id: id, status: TradeStatus.CLOSED },
+      }),
     ]);
 
     // Calculate P&L
-    const winningTrades = trades.filter(t => t.netProfit > 0);
-    const losingTrades = trades.filter(t => t.netProfit < 0);
+    const winningTrades = trades.filter((t) => t.netProfit > 0);
+    const losingTrades = trades.filter((t) => t.netProfit < 0);
     const totalProfit = winningTrades.reduce((sum, t) => sum + t.netProfit, 0);
     const totalLoss = Math.abs(
       losingTrades.reduce((sum, t) => sum + t.netProfit, 0)
@@ -303,7 +303,8 @@ export class AdminUserManagementService {
         closedTrades,
         winningTrades: winningTrades.length,
         losingTrades: losingTrades.length,
-        winRate: totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0,
+        winRate:
+          totalTrades > 0 ? (winningTrades.length / totalTrades) * 100 : 0,
         totalProfit,
         totalLoss,
         netProfit: totalProfit - totalLoss,
@@ -316,11 +317,11 @@ export class AdminUserManagementService {
    */
   private calculateDaysRemaining(expiresAt: Date | null): number | null {
     if (!expiresAt) return null;
-    
+
     const now = new Date();
     const diff = expiresAt.getTime() - now.getTime();
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    
+
     return days > 0 ? days : 0;
   }
 
@@ -340,14 +341,14 @@ export class AdminUserManagementService {
       this.userRepo.count({ where: { status: UserStatus.ACTIVE } }),
       this.userRepo.count({ where: { status: UserStatus.SUSPENDED } }),
       this.userRepo.count({ where: { tier: SubscriptionTier.FREE } }),
-      this.userRepo.count({ 
-        where: { 
+      this.userRepo.count({
+        where: {
           tier: In([
-            SubscriptionTier.STARTER, 
-            SubscriptionTier.PRO, 
-            SubscriptionTier.ENTERPRISE
-          ])
-        } 
+            SubscriptionTier.STARTER,
+            SubscriptionTier.PRO,
+            SubscriptionTier.ENTERPRISE,
+          ]),
+        },
       }),
       this.getRecentRegistrations(),
     ]);
@@ -398,14 +399,14 @@ export class AdminUserManagementService {
       where: {
         createdAt: Between(thirtyDaysAgo, new Date()),
       },
-      order: { createdAt: 'ASC' },
+      order: { createdAt: "ASC" },
     });
 
     // Group by day
     const trends: { [key: string]: number } = {};
-    
-    users.forEach(user => {
-      const date = user.createdAt.toISOString().split('T')[0];
+
+    users.forEach((user) => {
+      const date = user.createdAt.toISOString().split("T")[0];
       trends[date] = (trends[date] || 0) + 1;
     });
 
@@ -420,15 +421,15 @@ export class AdminUserManagementService {
    */
   private async getTierDistribution(): Promise<any[]> {
     const result = await this.userRepo
-      .createQueryBuilder('user')
-      .select('user.tier', 'tier')
-      .addSelect('COUNT(*)', 'count')
-      .groupBy('user.tier')
+      .createQueryBuilder("user")
+      .select("user.tier", "tier")
+      .addSelect("COUNT(*)", "count")
+      .groupBy("user.tier")
       .getRawMany();
 
-    return result.map(r => ({
+    return result.map((r) => ({
       tier: r.tier,
-      count: parseInt(r.count || '0'),
+      count: parseInt(r.count || "0"),
     }));
   }
 
@@ -437,12 +438,9 @@ export class AdminUserManagementService {
    */
   async searchUsers(query: string, limit: number = 10): Promise<User[]> {
     return await this.userRepo.find({
-      where: [
-        { fullName: Like(`%${query}%`) },
-        { email: Like(`%${query}%`) },
-      ],
+      where: [{ fullName: Like(`%${query}%`) }, { email: Like(`%${query}%`) }],
       take: limit,
-      order: { createdAt: 'DESC' },
+      order: { createdAt: "DESC" },
     });
   }
 
@@ -452,7 +450,7 @@ export class AdminUserManagementService {
   async getUsersByTier(tier: SubscriptionTier): Promise<User[]> {
     return await this.userRepo.find({
       where: { tier },
-      order: { createdAt: 'DESC' },
+      order: { createdAt: "DESC" },
     });
   }
 
@@ -461,11 +459,11 @@ export class AdminUserManagementService {
    */
   async getExpiredSubscriptions(): Promise<User[]> {
     return await this.userRepo
-      .createQueryBuilder('user')
-      .where('user.subscriptionExpiresAt IS NOT NULL')
-      .andWhere('user.subscriptionExpiresAt < :now', { now: new Date() })
-      .andWhere('user.status = :status', { status: UserStatus.ACTIVE })
-      .orderBy('user.subscriptionExpiresAt', 'ASC')
+      .createQueryBuilder("user")
+      .where("user.subscriptionExpiresAt IS NOT NULL")
+      .andWhere("user.subscriptionExpiresAt < :now", { now: new Date() })
+      .andWhere("user.status = :status", { status: UserStatus.ACTIVE })
+      .orderBy("user.subscriptionExpiresAt", "ASC")
       .getMany();
   }
 
@@ -476,12 +474,12 @@ export class AdminUserManagementService {
     // Only super admin can promote
     const promoter = await this.userRepo.findOne({ where: { id: promotedBy } });
     if (!promoter || promoter.role !== UserRole.SUPER_ADMIN) {
-      throw new Error('Only super admin can promote users to admin');
+      throw new Error("Only super admin can promote users to admin");
     }
 
     const user = await this.getUserById(userId);
     user.role = UserRole.ADMIN;
-    
+
     await this.userRepo.save(user);
 
     return user;
@@ -494,17 +492,17 @@ export class AdminUserManagementService {
     // Only super admin can demote
     const demoter = await this.userRepo.findOne({ where: { id: demotedBy } });
     if (!demoter || demoter.role !== UserRole.SUPER_ADMIN) {
-      throw new Error('Only super admin can demote admins');
+      throw new Error("Only super admin can demote admins");
     }
 
     const user = await this.getUserById(userId);
-    
+
     if (user.role === UserRole.SUPER_ADMIN) {
-      throw new Error('Cannot demote super admin');
+      throw new Error("Cannot demote super admin");
     }
 
     user.role = UserRole.USER;
-    
+
     await this.userRepo.save(user);
 
     return user;

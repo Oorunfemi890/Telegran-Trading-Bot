@@ -6,14 +6,14 @@
 import AppDataSource from '../config/database.config';
 import { Trade } from '../database/entities/Trade.entity';
 import { Position } from '../database/entities/Position.entity';
-import { User } from '../database/entities/User.entity';
+// import { User } from '../database/entities/User.entity';
 import { TradeStatus } from '../types';
 import { Between, In } from 'typeorm';
 
 export class TradeService {
   private tradeRepo = AppDataSource.getRepository(Trade);
   private positionRepo = AppDataSource.getRepository(Position);
-  private userRepo = AppDataSource.getRepository(User);
+  // private userRepo = AppDataSource.getRepository(User);
 
   /**
    * Get all trades for a user

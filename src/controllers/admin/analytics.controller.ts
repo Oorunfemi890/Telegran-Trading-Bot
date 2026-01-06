@@ -63,7 +63,7 @@ export class AdminAnalyticsController {
    * Get real-time dashboard stats
    * GET /api/v1/admin/analytics/dashboard
    */
-  async getRealTimeDashboard(req: Request, res: Response): Promise<void> {
+  async getRealTimeDashboard(_req: Request, res: Response): Promise<void> {
     try {
       const stats = await analyticsService.getRealTimeDashboard();
 

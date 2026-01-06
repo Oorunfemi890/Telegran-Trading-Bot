@@ -17,7 +17,7 @@ export class MetaTraderClient {
     brokerUrl: string,
     accountNumber: string,
     encryptedApiKey: string,
-    encryptedApiSecret?: string
+    _encryptedApiSecret?: string
   ) {
     this.accountNumber = accountNumber;
     

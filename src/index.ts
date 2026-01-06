@@ -296,7 +296,7 @@ console.log('✅ Subscription reminder job started\n');
 
         console.log("⏹️  Stopping scheduled jobs...");
         stopSignalExpirationJob();
-        stopMonitoringScheduler();
+        // stopMonitoringScheduler();
         stopDailyReportScheduler();
         stopMetricsPushScheduler(); // ✅ ADD THIS
         stopSubscriptionReminderJob();

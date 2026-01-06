@@ -345,7 +345,7 @@ export class TradeExecutorService {
     signal: Signal,
     entryPrices: number[],
     lotSize: number,
-    settings: UserSettings
+    _settings: UserSettings
   ): Promise<number> {
     let positionsOpened = 0;
 
@@ -406,7 +406,7 @@ export class TradeExecutorService {
   private async sendTradeOpenedNotification(
     user: User,
     trade: Trade,
-    signal: Signal,
+    _signal: Signal,
     entryPrices: number[]
   ): Promise<void> {
     try {

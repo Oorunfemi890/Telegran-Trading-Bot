@@ -9,7 +9,7 @@ import usersRouter from "./users.routes";
 const adminRouter = Router();
 
 // Admin routes overview
-adminRouter.get('/', (req, res) => {
+adminRouter.get('/', (_req, res) => {
   res.json({
     success: true,
     message: 'Admin API v1',
