@@ -111,6 +111,8 @@ import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 import tradeRoutes from "./routes/trade.routes";
  import channelRequestRoutes from './routes/channel-request.routes';
+import eaBridgeRoutes from './routes/ea-bridge.routes'; // ✅ ADD THIS
+
 
 // Admin routes
 import adminInvitationRoutes from "./routes/admin/invitation.routes";
@@ -143,6 +145,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/trades", tradeRoutes);
 app.use('/api/v1/channel-requests', channelRequestRoutes);
+app.use('/api/v1/ea', eaBridgeRoutes);
 
 // Admin routes
 app.use("/api/v1/admin/invitations", adminInvitationRoutes);

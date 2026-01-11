@@ -390,3 +390,57 @@ export interface AuditLogEntry {
   userAgent?: string;
   timestamp: Date;
 }
+
+// EA-RELATED TYPES
+export enum EATokenStatus {
+  ACTIVE = 'active',
+  REVOKED = 'revoked',
+  EXPIRED = 'expired',
+}
+
+export enum EAConnectionStatus {
+  ONLINE = 'online',
+  OFFLINE = 'offline',
+  WARNING = 'warning',
+  ERROR = 'error',
+}
+
+export interface EATokenData {
+  id: string;
+  deviceName: string;
+  platform: string | null;
+  status: EATokenStatus;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+  requestCount: number;
+}
+
+export interface EAStatusData {
+  connected: boolean;
+  lastPing: Date | null;
+  accountInfo: {
+    accountNumber: string | null;
+    broker: string | null;
+    balance: number;
+    equity: number;
+    freeMargin: number;
+    openPositions: number;
+  } | null;
+}
+
+export interface GenerateEATokenRequest {
+  deviceName: string;
+  platform?: 'MT4' | 'MT5';
+}
+
+export interface GenerateEATokenResponse {
+  success: boolean;
+  data?: {
+    token: string;
+    deviceName: string;
+    platform: string | null;
+    createdAt: Date;
+    expiresAt: Date | null;
+  };
+  message?: string;
+}
