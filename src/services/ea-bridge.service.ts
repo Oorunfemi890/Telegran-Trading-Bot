@@ -1,22 +1,26 @@
-// FILE: src/services/ea-bridge.service.ts
+// FILE: src/services/ea-bridge.service.ts (FIXED)
 // =============================================
-// EA Bridge Service - Handles communication between EA and backend
+// EA Bridge Service - COMPLETE IMPLEMENTATION
 // =============================================
 
-import AppDataSource from '../config/database.config';
-import { EAToken, EATokenStatus } from '../database/entities/EAToken.entity';
-import { EAHeartbeat, EAConnectionStatus } from '../database/entities/EAHeartbeat.entity';
-import { Trade } from '../database/entities/Trade.entity';
-import { Position } from '../database/entities/Position.entity';
-import { User } from '../database/entities/User.entity';
-import { TradeStatus, PositionStatus } from '../types';
-import { generateRandomToken } from '../helpers/encryption.helper';
-import { getWebSocketServer } from '../websocket/socket.server';
+import AppDataSource from "../config/database.config";
+import { EAToken, EATokenStatus } from "../database/entities/EAToken.entity";
+import {
+  EAHeartbeat,
+  EAConnectionStatus,
+} from "../database/entities/EAHeartbeat.entity";
+import { Trade } from "../database/entities/Trade.entity";
+import { Position } from "../database/entities/Position.entity";
+import { User } from "../database/entities/User.entity";
+import { TradeStatus, PositionStatus } from "../types";
+import { generateRandomToken } from "../helpers/encryption.helper";
+import { getWebSocketServer } from "../websocket/socket.server";
+import { In } from "typeorm";
 
 export interface TradeInstruction {
   tradeId: string;
   symbol: string;
-  direction: 'buy' | 'sell';
+  direction: "buy" | "sell";
   positions: Array<{
     positionId: string;
     positionNumber: number;
@@ -24,7 +28,7 @@ export interface TradeInstruction {
     lotSize: number;
     stopLoss: number;
     takeProfit: number;
-    orderType: 'market' | 'limit';
+    orderType: "market" | "limit";
   }>;
   totalRiskAmount: number;
   createdAt: Date;
@@ -47,9 +51,6 @@ export class EABridgeService {
   private positionRepo = AppDataSource.getRepository(Position);
   private userRepo = AppDataSource.getRepository(User);
 
-  /**
-   * Generate new EA token for user
-   */
   async generateToken(
     userId: string,
     deviceName: string,
@@ -57,7 +58,7 @@ export class EABridgeService {
   ): Promise<EAToken> {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) {
-      throw new Error('User not found');
+      throw new Error("User not found");
     }
 
     // Revoke existing active tokens for this device
@@ -83,7 +84,7 @@ export class EABridgeService {
       deviceName,
       platform: platform || null,
       status: EATokenStatus.ACTIVE,
-      expiresAt: null, // Never expires unless revoked
+      expiresAt: null,
       requestCount: 0,
     });
 
@@ -94,13 +95,12 @@ export class EABridgeService {
     return eaToken;
   }
 
-  /**
-   * Verify EA token
-   */
-  async verifyToken(token: string): Promise<{ valid: boolean; userId?: string; tokenId?: string }> {
+  async verifyToken(
+    token: string
+  ): Promise<{ valid: boolean; userId?: string; tokenId?: string }> {
     const eaToken = await this.eaTokenRepo.findOne({
       where: { token },
-      relations: ['user'],
+      relations: ["user"],
     });
 
     if (!eaToken) {
@@ -123,24 +123,26 @@ export class EABridgeService {
   }
 
   /**
-   * Get pending trade instructions for EA
+   * ✅ FIXED: Get pending trade instructions for EA
+   * Returns ALL pending positions across all trades
    */
   async getInstructions(userId: string): Promise<TradeInstruction[]> {
-    const pendingTrades = await this.tradeRepo.find({
+    // Get all PENDING or OPEN trades for this user
+    const trades = await this.tradeRepo.find({
       where: {
         user_id: userId,
-        status: TradeStatus.PENDING,
+        status: In([TradeStatus.PENDING, TradeStatus.OPEN]),
       },
-      relations: ['positions'],
-      order: { createdAt: 'ASC' },
-      take: 10, // Max 10 trades at once
+      relations: ["positions"],
+      order: { createdAt: "ASC" },
     });
 
     const instructions: TradeInstruction[] = [];
 
-    for (const trade of pendingTrades) {
+    for (const trade of trades) {
+      // Get PENDING positions only
       const pendingPositions = trade.positions.filter(
-        (p) => p.status === PositionStatus.PENDING || p.status === PositionStatus.OPEN
+        (p) => p.status === PositionStatus.PENDING
       );
 
       if (pendingPositions.length > 0) {
@@ -163,24 +165,29 @@ export class EABridgeService {
       }
     }
 
+    console.log(
+      `📤 EA Instructions: ${instructions.length} trade(s) with pending positions`
+    );
     return instructions;
   }
 
   /**
-   * Report execution result from EA
+   * ✅ FIXED: Report execution result from EA
    */
   async reportExecution(report: EAExecutionReport): Promise<void> {
     const position = await this.positionRepo.findOne({
       where: { id: report.positionId },
-      relations: ['trade'],
+      relations: ["trade", "trade.user"],
     });
 
     if (!position) {
-      throw new Error('Position not found');
+      throw new Error("Position not found");
     }
 
+    const trade = position.trade;
+
     if (report.success) {
-      // Update position with MT ticket
+      // ✅ Update position with MT ticket
       position.mtOrderTicket = report.mtOrderTicket || null;
       position.status = PositionStatus.OPEN;
       position.openedAt = report.executionTime || new Date();
@@ -191,8 +198,7 @@ export class EABridgeService {
 
       await this.positionRepo.save(position);
 
-      // Update trade
-      const trade = position.trade;
+      // ✅ Update trade
       trade.positionsFilled += 1;
 
       // If all positions filled, mark trade as OPEN
@@ -203,9 +209,11 @@ export class EABridgeService {
 
       await this.tradeRepo.save(trade);
 
-      console.log(`✅ EA executed position ${position.positionNumber} for trade ${trade.id}`);
+      console.log(
+        `✅ EA executed position ${position.positionNumber} for trade ${trade.id}`
+      );
 
-      // Emit WebSocket event
+      // ✅ Emit WebSocket event
       const wsServer = getWebSocketServer();
       if (wsServer) {
         wsServer.emitPositionUpdate(trade.user_id, {
@@ -216,16 +224,29 @@ export class EABridgeService {
           mtOrderTicket: position.mtOrderTicket,
           openedAt: position.openedAt,
         });
+
+        // If trade just became OPEN, emit trade opened event
+        if (
+          trade.status === TradeStatus.OPEN &&
+          trade.positionsFilled === trade.totalPositions
+        ) {
+          wsServer.emitTradeOpened(trade.user_id, {
+            id: trade.id,
+            symbol: trade.symbol,
+            direction: trade.direction,
+            status: TradeStatus.OPEN,
+            openedAt: trade.openedAt,
+          });
+        }
       }
     } else {
-      console.error(`❌ EA failed to execute position ${position.id}: ${report.error}`);
+      console.error(
+        `❌ EA failed to execute position ${position.id}: ${report.error}`
+      );
       // Keep as PENDING for retry
     }
   }
 
-  /**
-   * Record EA heartbeat (ping)
-   */
   async recordHeartbeat(
     userId: string,
     tokenId: string,
@@ -250,6 +271,8 @@ export class EABridgeService {
         ea_token_id: tokenId,
         status: EAConnectionStatus.ONLINE,
         lastPingAt: new Date(),
+        accountNumber: accountData?.accountNumber || null,
+        broker: accountData?.broker || null,
         balance: accountData?.balance || 0,
         equity: accountData?.equity || 0,
         freeMargin: accountData?.freeMargin || 0,
@@ -268,8 +291,8 @@ export class EABridgeService {
     // Emit WebSocket event
     const wsServer = getWebSocketServer();
     if (wsServer && wsServer.isUserConnected(userId)) {
-      wsServer.emitToUser(userId, 'ea:status', {
-        status: 'online',
+      wsServer.emitToUser(userId, "ea:status", {
+        status: "online",
         balance: accountData?.balance,
         equity: accountData?.equity,
         openPositions: accountData?.openPositions,
@@ -278,9 +301,6 @@ export class EABridgeService {
     }
   }
 
-  /**
-   * Get EA connection status for user
-   */
   async getConnectionStatus(userId: string): Promise<{
     connected: boolean;
     lastPing: Date | null;
@@ -288,7 +308,7 @@ export class EABridgeService {
   }> {
     const heartbeat = await this.heartbeatRepo.findOne({
       where: { user_id: userId },
-      order: { lastPingAt: 'DESC' },
+      order: { lastPingAt: "DESC" },
     });
 
     if (!heartbeat) {
@@ -313,16 +333,13 @@ export class EABridgeService {
     };
   }
 
-  /**
-   * Revoke EA token
-   */
   async revokeToken(userId: string, tokenId: string): Promise<void> {
     const token = await this.eaTokenRepo.findOne({
       where: { id: tokenId, user_id: userId },
     });
 
     if (!token) {
-      throw new Error('Token not found');
+      throw new Error("Token not found");
     }
 
     token.revoke();
@@ -331,13 +348,10 @@ export class EABridgeService {
     console.log(`✅ EA Token revoked: ${tokenId}`);
   }
 
-  /**
-   * Get all user tokens
-   */
   async getUserTokens(userId: string): Promise<EAToken[]> {
     return await this.eaTokenRepo.find({
       where: { user_id: userId },
-      order: { createdAt: 'DESC' },
+      order: { createdAt: "DESC" },
     });
   }
 }

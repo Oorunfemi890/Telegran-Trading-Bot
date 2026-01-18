@@ -1,6 +1,6 @@
-// FILE: src/services/position.monitor.ts (UPDATED WITH WEBSOCKET)
+// FILE: src/services/position.monitor.ts (EA-COMPATIBLE VERSION)
 // =============================================
-// PHASE 9: POSITION MONITORING + PHASE 12: WEBSOCKET
+// PHASE 9: POSITION MONITORING - EA COMPATIBLE
 // =============================================
 
 import AppDataSource from "../config/database.config";
@@ -9,7 +9,7 @@ import { Position } from "../database/entities/Position.entity";
 import { User } from "../database/entities/User.entity";
 import { UserSettings } from "../database/entities/UserSettings.entity";
 import { EmailService } from "./email.service";
-import { getWebSocketServer } from "../websocket/socket.server"; // ✅ ADDED
+import { getWebSocketServer } from "../websocket/socket.server";
 import {
   TradeStatus,
   PositionStatus,
@@ -100,7 +100,7 @@ export class PositionMonitorService {
   }
 
   /**
-   * Check and activate breakeven
+   * ✅ FIXED: Update stop loss in position record (EA will execute)
    */
   private async checkBreakeven(
     trade: Trade,
@@ -128,13 +128,14 @@ export class PositionMonitorService {
       console.log(`   Price moved ${pipsFromEntry.toFixed(1)} pips`);
       console.log(`   Threshold: ${settings.breakevenActivationPips} pips\n`);
 
+      // ✅ Update stop loss - EA will handle the actual modification
       for (const position of openPositions) {
         position.currentStopLoss = position.entryPrice;
         position.breakevenActivated = true;
         await this.positionRepo.save(position);
 
         console.log(
-          `   ✅ Position ${position.positionNumber}: SL → ${position.entryPrice.toFixed(5)}`
+          `   ✅ Position ${position.positionNumber}: SL → ${position.entryPrice.toFixed(5)} (EA will modify)`
         );
       }
 
@@ -147,7 +148,7 @@ export class PositionMonitorService {
   }
 
   /**
-   * Check take profit levels
+   * ✅ FIXED: Mark positions for closure, don't close directly
    */
   private async checkTakeProfits(
     trade: Trade,
@@ -166,15 +167,20 @@ export class PositionMonitorService {
           : currentPrice <= tp.price;
 
       if (tpReached) {
-        await this.executeTakeProfit(trade, tp, currentPrice, openPositions);
+        await this.markPositionsForTPClosure(
+          trade,
+          tp,
+          currentPrice,
+          openPositions
+        );
       }
     }
   }
 
   /**
-   * Execute take profit closure
+   * ✅ NEW: Mark positions for TP closure (EA will close them)
    */
-  private async executeTakeProfit(
+  private async markPositionsForTPClosure(
     trade: Trade,
     tp: any,
     currentPrice: number,
@@ -184,67 +190,59 @@ export class PositionMonitorService {
 
     if (positionsToClose === 0) return;
 
+    // Check if we've already marked these positions
+    const alreadyMarked = trade.positions.filter(
+      (p) =>
+        p.closeReason === (`tp${tp.level}` as CloseReason) &&
+        p.status === PositionStatus.OPEN
+    ).length;
+
+    if (alreadyMarked >= positionsToClose) return;
+
     console.log(`\n💰 TAKE PROFIT ${tp.level} HIT for trade ${trade.id}`);
     console.log(`   Target: ${tp.price.toFixed(5)}`);
     console.log(`   Current: ${currentPrice.toFixed(5)}`);
-    console.log(`   Closing ${positionsToClose} position(s)\n`);
+    console.log(`   Marking ${positionsToClose} position(s) for closure\n`);
 
-    const sortedPositions = [...openPositions].sort((a, b) =>
-      trade.direction === TradeDirection.BUY
-        ? a.entryPrice - b.entryPrice
-        : b.entryPrice - a.entryPrice
-    );
-
-    let totalProfit = 0;
-
-    for (let i = 0; i < positionsToClose; i++) {
-      const position = sortedPositions[i];
-
-      const profit = this.calculateProfit(
-        position.entryPrice,
-        currentPrice,
-        position.lotSize,
-        trade.direction
+    const sortedPositions = [...openPositions]
+      .filter((p) => !p.closeReason) // Only unmarked positions
+      .sort((a, b) =>
+        trade.direction === TradeDirection.BUY
+          ? a.entryPrice - b.entryPrice
+          : b.entryPrice - a.entryPrice
       );
 
-      position.status = PositionStatus.CLOSED;
+    for (
+      let i = 0;
+      i < Math.min(positionsToClose, sortedPositions.length);
+      i++
+    ) {
+      const position = sortedPositions[i];
+
+      // ✅ Mark for closure - EA will see this and close
       position.closedPrice = currentPrice;
-      position.profit = profit;
       position.closeReason = `tp${tp.level}` as CloseReason;
-      position.closedAt = new Date();
+      // Keep status as OPEN - EA will change to CLOSED after closing
 
       await this.positionRepo.save(position);
 
-      totalProfit += profit;
-
       console.log(
-        `   ✅ Position ${position.positionNumber}: +$${profit.toFixed(2)}`
+        `   ✅ Position ${position.positionNumber} marked for TP${tp.level} closure`
       );
     }
 
-    trade.grossProfit += totalProfit;
-    trade.netProfit = trade.grossProfit - trade.commissions;
-    await this.tradeRepo.save(trade);
-
-    await this.sendTakeProfitNotification(
-      trade,
-      tp.level,
-      tp.price,
-      positionsToClose,
-      openPositions.length - positionsToClose,
-      totalProfit
-    );
+    // Notification will be sent when EA confirms closure
   }
 
   /**
-   * Check stop loss
+   * ✅ FIXED: Mark for SL closure, don't close directly
    */
   private async checkStopLoss(
     trade: Trade,
     currentPrice: number
   ): Promise<void> {
     const openPositions = trade.positions.filter(
-      (p) => p.status === PositionStatus.OPEN
+      (p) => p.status === PositionStatus.OPEN && !p.closeReason // Not already marked
     );
 
     for (const position of openPositions) {
@@ -254,54 +252,38 @@ export class PositionMonitorService {
           : currentPrice >= position.currentStopLoss;
 
       if (slHit) {
-        await this.executeStopLoss(trade, position, currentPrice);
+        await this.markPositionForSLClosure(trade, position, currentPrice);
       }
     }
   }
 
   /**
-   * Execute stop loss closure
+   * ✅ NEW: Mark position for SL closure
    */
-  private async executeStopLoss(
+  private async markPositionForSLClosure(
     trade: Trade,
     position: Position,
     currentPrice: number
   ): Promise<void> {
-    const loss = this.calculateProfit(
-      position.entryPrice,
-      position.currentStopLoss,
-      position.lotSize,
-      trade.direction
-    );
-
     const isBreakeven = position.breakevenActivated;
 
     console.log(`\n⚠️  STOP LOSS HIT for trade ${trade.id}`);
     console.log(`   Position: ${position.positionNumber}`);
     console.log(`   Type: ${isBreakeven ? "Breakeven" : "Original"}`);
-    console.log(`   Loss: $${loss.toFixed(2)}\n`);
+    console.log(`   Marking for closure\n`);
 
-    position.status = PositionStatus.CLOSED;
+    // ✅ Mark for closure
     position.closedPrice = currentPrice;
-    position.profit = loss;
     position.closeReason = isBreakeven
       ? CloseReason.BREAKEVEN_SL
       : CloseReason.SL;
-    position.closedAt = new Date();
+    // Keep status as OPEN - EA will change to CLOSED
 
     await this.positionRepo.save(position);
 
-    trade.grossProfit += loss;
-    trade.netProfit = trade.grossProfit - trade.commissions;
-    await this.tradeRepo.save(trade);
-
-    const remainingOpen = trade.positions.filter(
-      (p) => p.status === PositionStatus.OPEN
-    ).length;
-
-    if (remainingOpen === 0) {
-      await this.sendStopLossNotification(trade, isBreakeven, Math.abs(loss));
-    }
+    console.log(
+      `   ✅ Position ${position.positionNumber} marked for SL closure`
+    );
   }
 
   /**
@@ -312,7 +294,16 @@ export class PositionMonitorService {
       (p) => p.status === PositionStatus.OPEN
     );
 
-    if (openPositions.length === 0 && trade.status === TradeStatus.OPEN) {
+    // Trade is complete when all positions are closed
+    const closedPositions = trade.positions.filter(
+      (p) => p.status === PositionStatus.CLOSED
+    );
+
+    if (
+      openPositions.length === 0 &&
+      closedPositions.length > 0 &&
+      trade.status === TradeStatus.OPEN
+    ) {
       console.log(`\n✅ TRADE COMPLETE: ${trade.id}\n`);
 
       trade.status = TradeStatus.CLOSED;
@@ -321,23 +312,6 @@ export class PositionMonitorService {
 
       await this.sendTradeCompletedNotification(trade);
     }
-  }
-
-  private calculateProfit(
-    entryPrice: number,
-    exitPrice: number,
-    lotSize: number,
-    direction: TradeDirection
-  ): number {
-    const pipSize = 0.01;
-    const pipValue = 1;
-
-    const pips =
-      direction === TradeDirection.BUY
-        ? (exitPrice - entryPrice) / pipSize
-        : (entryPrice - exitPrice) / pipSize;
-
-    return pips * lotSize * pipValue;
   }
 
   private getPipSize(symbol: string): number {
@@ -353,9 +327,6 @@ export class PositionMonitorService {
     return pipSizes[symbol] || 0.0001;
   }
 
-  /**
-   * ✅ Send breakeven notification (EMAIL + WEBSOCKET)
-   */
   private async sendBreakevenNotification(
     trade: Trade,
     activationPrice: number
@@ -377,7 +348,6 @@ export class PositionMonitorService {
         activationPrice,
       };
 
-      // ✅ EMIT WEBSOCKET EVENT
       const wsServer = getWebSocketServer();
       if (wsServer) {
         wsServer.emitBreakevenActivated(user.id, {
@@ -391,7 +361,6 @@ export class PositionMonitorService {
         console.log("📡 WebSocket: Breakeven activated event emitted");
       }
 
-      // Send email
       await this.emailService.sendBreakevenActivatedEmail(
         notificationData,
         user.id,
@@ -403,131 +372,6 @@ export class PositionMonitorService {
     }
   }
 
-  /**
-   * ✅ Send take profit notification (EMAIL + WEBSOCKET)
-   */
-  private async sendTakeProfitNotification(
-    trade: Trade,
-    tpLevel: number,
-    tpPrice: number,
-    positionsClosed: number,
-    positionsRemaining: number,
-    profitFromTP: number
-  ): Promise<void> {
-    try {
-      const user = await this.userRepo.findOne({
-        where: { id: trade.user_id },
-      });
-
-      if (!user) return;
-
-      const notificationData = {
-        userName: user.fullName,
-        symbol: trade.symbol,
-        direction: trade.direction,
-        tpLevel,
-        tpPrice,
-        positionsClosed,
-        positionsRemaining,
-        profitFromTP,
-        totalProfit: trade.grossProfit,
-        tradeId: trade.id,
-      };
-
-      // ✅ EMIT WEBSOCKET EVENT
-      const wsServer = getWebSocketServer();
-      if (wsServer) {
-        wsServer.emitTakeProfitHit(
-          user.id,
-          {
-            id: trade.id,
-            symbol: trade.symbol,
-            direction: trade.direction,
-            tpLevel,
-            tpPrice,
-            positionsClosed,
-            positionsRemaining,
-            profitFromTP,
-            totalProfit: trade.grossProfit,
-          },
-          tpLevel
-        );
-        console.log(`📡 WebSocket: TP${tpLevel} hit event emitted`);
-      }
-
-      // Send email
-      await this.emailService.sendTakeProfitHitEmail(
-        notificationData,
-        user.id,
-        user.email
-      );
-      console.log(`📧 Email: TP${tpLevel} notification sent`);
-    } catch (error) {
-      console.error("⚠️  Failed to send TP notification:", error);
-    }
-  }
-
-  /**
-   * ✅ Send stop loss notification (EMAIL + WEBSOCKET)
-   */
-  private async sendStopLossNotification(
-    trade: Trade,
-    isBreakeven: boolean,
-    lossAmount: number
-  ): Promise<void> {
-    try {
-      const user = await this.userRepo.findOne({
-        where: { id: trade.user_id },
-      });
-
-      if (!user) return;
-
-      const positionsClosed = trade.positions.filter(
-        (p) => p.status === PositionStatus.CLOSED
-      ).length;
-
-      const notificationData = {
-        userName: user.fullName,
-        symbol: trade.symbol,
-        direction: trade.direction,
-        stopLossType: isBreakeven
-          ? ("breakeven" as const)
-          : ("original" as const),
-        lossAmount,
-        positionsClosed,
-        tradeId: trade.id,
-        accountBalance: 10000,
-        riskPercentage: 10,
-      };
-
-      // ✅ EMIT WEBSOCKET EVENT
-      const wsServer = getWebSocketServer();
-      if (wsServer) {
-        wsServer.emitStopLossHit(user.id, {
-          id: trade.id,
-          symbol: trade.symbol,
-          direction: trade.direction,
-          stopLossType: isBreakeven ? "breakeven" : "original",
-          lossAmount,
-        });
-        console.log("📡 WebSocket: Stop loss hit event emitted");
-      }
-
-      // Send email
-      await this.emailService.sendStopLossHitEmail(
-        notificationData,
-        user.id,
-        user.email
-      );
-      console.log("📧 Email: Stop loss notification sent");
-    } catch (error) {
-      console.error("⚠️  Failed to send SL notification:", error);
-    }
-  }
-
-  /**
-   * ✅ Send trade completed notification (EMAIL + WEBSOCKET)
-   */
   private async sendTradeCompletedNotification(trade: Trade): Promise<void> {
     try {
       const user = await this.userRepo.findOne({
@@ -547,11 +391,12 @@ export class PositionMonitorService {
         trade.positions.reduce((sum, p) => sum + p.entryPrice, 0) /
         trade.positions.length;
 
+      const closedPositions = trade.positions.filter((p) => p.closedPrice);
       const avgExit =
-        trade.positions
-          .filter((p) => p.closedPrice)
-          .reduce((sum, p) => sum + (p.closedPrice || 0), 0) /
-        trade.positions.filter((p) => p.closedPrice).length;
+        closedPositions.length > 0
+          ? closedPositions.reduce((sum, p) => sum + (p.closedPrice || 0), 0) /
+            closedPositions.length
+          : 0;
 
       const notificationData = {
         userName: user.fullName,
@@ -573,7 +418,6 @@ export class PositionMonitorService {
         })),
       };
 
-      // ✅ EMIT WEBSOCKET EVENT
       const wsServer = getWebSocketServer();
       if (wsServer) {
         wsServer.emitTradeCompleted(user.id, {
@@ -590,7 +434,6 @@ export class PositionMonitorService {
         console.log("📡 WebSocket: Trade completed event emitted");
       }
 
-      // Send email
       await this.emailService.sendTradeCompletedEmail(
         notificationData,
         user.id,

@@ -21,7 +21,7 @@ const createRedisClient = (): Redis | null => {
         maxRetriesPerRequest: null, // CRITICAL for BullMQ
         enableReadyCheck: false,
         enableOfflineQueue: true,
-        connectTimeout: 10000,
+        // connectTimeout: 10000,
         retryStrategy: (times: number) => {
           if (times > 3) {
             console.error("❌ Redis connection failed after 3 retries");

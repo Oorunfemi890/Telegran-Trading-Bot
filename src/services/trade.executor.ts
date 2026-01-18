@@ -1,6 +1,6 @@
-// FILE: src/services/trade.executor.ts (UPDATED WITH WEBSOCKET)
+// FILE: src/services/trade.executor.ts (FIXED FOR EA EXECUTION)
 // =============================================
-// PHASE 8: TRADE EXECUTION SERVICE + PHASE 12: WEBSOCKET
+// EA-COMPATIBLE TRADE EXECUTION SERVICE
 // =============================================
 
 import AppDataSource from "../config/database.config";
@@ -13,7 +13,7 @@ import { TradingAccount } from "../database/entities/TradingAccount.entity";
 import { RiskCalculator } from "./risk.calculator";
 import { RiskValidationService } from "./risk.validation";
 import { EmailService } from "./email.service";
-import { getWebSocketServer } from "../websocket/socket.server"; // ✅ ADDED
+import { getWebSocketServer } from "../websocket/socket.server";
 import {
   TradeDirection,
   TradeStatus,
@@ -27,7 +27,7 @@ export interface TradeExecutionResult {
   tradeId?: string;
   error?: string;
   details?: {
-    positionsOpened: number;
+    positionsCreated: number;
     totalRisk: number;
     lotSize: number;
   };
@@ -52,13 +52,13 @@ export class TradeExecutorService {
   }
 
   /**
-   * Main execution function - Execute a trade for a user
+   * ✅ FIXED: Create trade as PENDING for EA execution
    */
   async executeTrade(
     userId: string,
     signalId: string
   ): Promise<TradeExecutionResult> {
-    console.log(`\n🚀 EXECUTING TRADE`);
+    console.log(`\n🚀 CREATING TRADE FOR EA EXECUTION`);
     console.log(`   User: ${userId}`);
     console.log(`   Signal: ${signalId}\n`);
 
@@ -144,7 +144,7 @@ export class TradeExecutorService {
       });
       console.log("");
 
-      // 6. Create master trade record
+      // 6. Create master trade record as PENDING
       const trade = await this.createTradeRecord(
         user,
         signal,
@@ -154,10 +154,10 @@ export class TradeExecutorService {
         entryPrices
       );
 
-      console.log(`✅ Trade record created: ${trade.id}\n`);
+      console.log(`✅ Trade record created: ${trade.id} (Status: PENDING)\n`);
 
-      // 7. Place orders for each position
-      const positionsOpened = await this.placeOrders(
+      // 7. ✅ FIXED: Create PENDING positions for EA to execute
+      const positionsCreated = await this.createPendingPositions(
         trade,
         signal,
         entryPrices,
@@ -165,22 +165,28 @@ export class TradeExecutorService {
         settings
       );
 
-      console.log(`✅ ${positionsOpened} positions opened\n`);
+      console.log(
+        `✅ ${positionsCreated} positions created as PENDING for EA\n`
+      );
 
       // 8. Send notifications (EMAIL + WEBSOCKET)
-      await this.sendTradeOpenedNotification(user, trade, signal, entryPrices);
+      await this.sendTradeQueuedNotification(user, trade, signal, entryPrices);
+
+      // 9. ✅ Update signal trade count
+      signal.tradesGenerated += 1;
+      await this.signalRepo.save(signal);
 
       return {
         success: true,
         tradeId: trade.id,
         details: {
-          positionsOpened,
+          positionsCreated,
           totalRisk: riskCalc.totalRiskAmount,
           lotSize: riskCalc.lotSizePerPosition,
         },
       };
     } catch (error: any) {
-      console.error("❌ Trade execution failed:", error.message);
+      console.error("❌ Trade creation failed:", error.message);
       return {
         success: false,
         error: error.message,
@@ -188,9 +194,6 @@ export class TradeExecutorService {
     }
   }
 
-  /**
-   * Load all required data for trade execution
-   */
   private async loadTradeData(userId: string, signalId: string) {
     const user = await this.userRepo.findOne({
       where: { id: userId },
@@ -228,9 +231,6 @@ export class TradeExecutorService {
     return { user, signal, settings, account };
   }
 
-  /**
-   * Get current market price (simulated for now)
-   */
   private async getCurrentMarketPrice(symbol: string): Promise<number> {
     const prices: { [key: string]: number } = {
       XAUUSD: 4200 + Math.random() * 10,
@@ -243,9 +243,6 @@ export class TradeExecutorService {
     return prices[symbol] || 1.0;
   }
 
-  /**
-   * Validate price is within entry range
-   */
   private isPriceValid(signal: Signal, currentPrice: number): boolean {
     const buffer = 0.001;
 
@@ -256,9 +253,6 @@ export class TradeExecutorService {
     }
   }
 
-  /**
-   * Generate entry prices for positions
-   */
   private generateEntryPrices(
     direction: TradeDirection,
     entryMin: number,
@@ -283,9 +277,6 @@ export class TradeExecutorService {
     }
   }
 
-  /**
-   * Create master trade record
-   */
   private async createTradeRecord(
     user: User,
     signal: Signal,
@@ -314,7 +305,7 @@ export class TradeExecutorService {
       })),
       lotSizePerPosition: riskCalc.lotSizePerPosition,
       totalRiskAmount: riskCalc.totalRiskAmount,
-      status: TradeStatus.PENDING,
+      status: TradeStatus.PENDING, // ✅ PENDING for EA
       breakevenActivated: false,
       grossProfit: 0,
       commissions: 0,
@@ -324,9 +315,6 @@ export class TradeExecutorService {
     return await this.tradeRepo.save(trade);
   }
 
-  /**
-   * Get number of positions to close at each TP level
-   */
   private getPositionsForTP(tpIndex: number, totalPositions: number): number {
     if (tpIndex === 0) {
       return Math.ceil(totalPositions * 0.4);
@@ -338,20 +326,20 @@ export class TradeExecutorService {
   }
 
   /**
-   * Place orders for all positions
+   * ✅ FIXED: Create positions as PENDING (not executed)
    */
-  private async placeOrders(
+  private async createPendingPositions(
     trade: Trade,
     signal: Signal,
     entryPrices: number[],
     lotSize: number,
     _settings: UserSettings
   ): Promise<number> {
-    let positionsOpened = 0;
+    let positionsCreated = 0;
 
     for (let i = 0; i < entryPrices.length; i++) {
       const entryPrice = entryPrices[i];
-      const isImmediateEntry = i < 2;
+      const isImmediateEntry = i < 2; // First 2 are market orders
 
       try {
         const position = this.positionRepo.create({
@@ -361,49 +349,32 @@ export class TradeExecutorService {
           lotSize,
           currentStopLoss: signal.stopLoss,
           currentTakeProfit: signal.takeProfits[0].price,
-          mtOrderTicket: this.generateTicketNumber(),
+          mtOrderTicket: null, // ✅ Will be set by EA
           orderType: isImmediateEntry ? OrderType.MARKET : OrderType.LIMIT,
           breakevenActivated: false,
-          status: isImmediateEntry
-            ? PositionStatus.OPEN
-            : PositionStatus.PENDING,
+          status: PositionStatus.PENDING, // ✅ PENDING for EA execution
           profit: 0,
-          openedAt: isImmediateEntry ? new Date() : null,
+          openedAt: null, // ✅ Will be set when EA executes
         });
 
         await this.positionRepo.save(position);
-
-        if (isImmediateEntry) {
-          positionsOpened++;
-          trade.positionsFilled++;
-        }
+        positionsCreated++;
 
         console.log(
-          `   ✅ Position ${i + 1} placed: ${isImmediateEntry ? "MARKET" : "LIMIT"} @ ${entryPrice.toFixed(5)}`
+          `   ✅ Position ${i + 1} created: ${isImmediateEntry ? "MARKET" : "LIMIT"} @ ${entryPrice.toFixed(5)} (PENDING)`
         );
       } catch (error) {
-        console.error(`   ❌ Failed to place position ${i + 1}:`, error);
+        console.error(`   ❌ Failed to create position ${i + 1}:`, error);
       }
     }
 
-    trade.status = TradeStatus.OPEN;
-    trade.openedAt = new Date();
-    await this.tradeRepo.save(trade);
-
-    return positionsOpened;
+    return positionsCreated;
   }
 
   /**
-   * Generate simulated MT order ticket
+   * ✅ Send trade queued notification
    */
-  private generateTicketNumber(): string {
-    return Math.floor(Math.random() * 1000000000).toString();
-  }
-
-  /**
-   * ✅ Send trade opened notification (EMAIL + WEBSOCKET)
-   */
-  private async sendTradeOpenedNotification(
+  private async sendTradeQueuedNotification(
     user: User,
     trade: Trade,
     _signal: Signal,
@@ -428,7 +399,7 @@ export class TradeExecutorService {
         tradeId: trade.id,
       };
 
-      // ✅ EMIT WEBSOCKET EVENT (REAL-TIME)
+      // ✅ EMIT WEBSOCKET EVENT
       const wsServer = getWebSocketServer();
       if (wsServer) {
         wsServer.emitTradeOpened(user.id, {
@@ -436,16 +407,16 @@ export class TradeExecutorService {
           symbol: trade.symbol,
           direction: trade.direction,
           totalPositions: trade.totalPositions,
-          positionsFilled: trade.positionsFilled,
+          positionsFilled: 0,
           lotSize: trade.lotSizePerPosition,
           riskAmount: trade.totalRiskAmount,
           entryPrices,
           stopLoss: trade.stopLoss,
           takeProfits: trade.takeProfits,
-          status: trade.status,
-          openedAt: trade.openedAt,
+          status: TradeStatus.PENDING,
+          openedAt: null,
         });
-        console.log("📡 WebSocket: Trade opened event emitted");
+        console.log("📡 WebSocket: Trade queued event emitted");
       }
 
       // Send email notification
@@ -455,9 +426,9 @@ export class TradeExecutorService {
         user.email
       );
 
-      console.log("📧 Email: Trade opened notification sent");
+      console.log("📧 Email: Trade queued notification sent");
     } catch (error) {
-      console.error("⚠️  Failed to send trade opened notification:", error);
+      console.error("⚠️  Failed to send notification:", error);
     }
   }
 }
