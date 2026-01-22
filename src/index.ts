@@ -125,7 +125,7 @@ import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 import tradeRoutes from "./routes/trade.routes";
 import channelRequestRoutes from "./routes/channel-request.routes";
-import eaBridgeRoutes from "./routes/ea-bridge.routes"; // ✅ ADD THIS
+import eaBridgeRoutes from "./routes/ea-bridge.routes"; // ✅ ADD THIS\
 
 // Admin routes
 import adminInvitationRoutes from "./routes/admin/invitation.routes";
