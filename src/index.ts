@@ -3,6 +3,7 @@
 import "reflect-metadata";
 import { config } from "dotenv";
 import express, { Application, Request, Response, NextFunction } from "express";
+import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
@@ -50,7 +51,7 @@ import {
 import {
   startSubscriptionReminderJob,
   stopSubscriptionReminderJob,
-} from './jobs/subscription-reminder.job';
+} from "./jobs/subscription-reminder.job";
 
 config();
 
@@ -81,7 +82,20 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
-
+app.use(
+  "/assets",
+  express.static(path.join(__dirname, "../assets"), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith(".ex4") || filePath.endsWith(".ex5")) {
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${path.basename(filePath)}"`
+        );
+      }
+    },
+  })
+);
 // =============================================
 // HEALTH CHECK ROUTES
 // =============================================
@@ -110,9 +124,8 @@ app.get("/health", (_req: Request, res: Response) => {
 import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 import tradeRoutes from "./routes/trade.routes";
- import channelRequestRoutes from './routes/channel-request.routes';
-import eaBridgeRoutes from './routes/ea-bridge.routes'; // ✅ ADD THIS
-
+import channelRequestRoutes from "./routes/channel-request.routes";
+import eaBridgeRoutes from "./routes/ea-bridge.routes"; // ✅ ADD THIS
 
 // Admin routes
 import adminInvitationRoutes from "./routes/admin/invitation.routes";
@@ -144,8 +157,8 @@ app.get("/api/v1", (_req: Request, res: Response) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/trades", tradeRoutes);
-app.use('/api/v1/channel-requests', channelRequestRoutes);
-app.use('/api/v1/ea', eaBridgeRoutes);
+app.use("/api/v1/channel-requests", channelRequestRoutes);
+app.use("/api/v1/ea", eaBridgeRoutes);
 
 // Admin routes
 app.use("/api/v1/admin/invitations", adminInvitationRoutes);
@@ -225,8 +238,8 @@ async function startServer() {
     startMetricsPushScheduler(30); // Push every 30 seconds
     console.log("✅ Metrics push job started (30s intervals)\n");
 
-   startSubscriptionReminderJob();
-console.log('✅ Subscription reminder job started\n');
+    startSubscriptionReminderJob();
+    console.log("✅ Subscription reminder job started\n");
 
     // Start Telegram Listener
     if (process.env.TELEGRAM_ENABLED === "true") {
@@ -255,6 +268,8 @@ console.log('✅ Subscription reminder job started\n');
       console.log(
         `   ${getRedisClient() ? "✅" : "⚠️ "} Redis: ${getRedisClient() ? "Connected" : "Disabled"}`
       );
+      console.log("✅ Assets folder configured for EA downloads");
+
       console.log(
         `   ${telegramListener?.isActive() ? "✅" : "⚠️ "} Telegram: ${telegramListener?.isActive() ? "Listening" : "Disabled"}`
       );
