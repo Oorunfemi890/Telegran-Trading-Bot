@@ -1,6 +1,6 @@
-// FILE: src/controllers/ea-bridge.controller.ts
+// FILE: src/controllers/ea-bridge.controller.ts (UPDATED)
 // =============================================
-// EA Bridge Controller - API endpoints for EA communication
+// EA Bridge Controller - WITH NEW ENDPOINTS
 // =============================================
 
 import { Request, Response } from 'express';
@@ -11,7 +11,6 @@ const eaBridgeService = new EABridgeService();
 export class EABridgeController {
   /**
    * Generate new EA token
-   * POST /api/v1/ea/generate-token
    */
   async generateToken(req: Request, res: Response): Promise<void> {
     try {
@@ -61,7 +60,6 @@ export class EABridgeController {
 
   /**
    * Get trade instructions (called by EA)
-   * GET /api/v1/ea/instructions
    */
   async getInstructions(req: Request, res: Response): Promise<void> {
     try {
@@ -75,7 +73,6 @@ export class EABridgeController {
         return;
       }
 
-      // Verify token
       const verification = await eaBridgeService.verifyToken(token);
       if (!verification.valid || !verification.userId) {
         res.status(401).json({
@@ -85,7 +82,6 @@ export class EABridgeController {
         return;
       }
 
-      // Get instructions
       const instructions = await eaBridgeService.getInstructions(verification.userId);
 
       res.status(200).json({
@@ -106,7 +102,6 @@ export class EABridgeController {
 
   /**
    * Report execution result (called by EA)
-   * POST /api/v1/ea/report
    */
   async reportExecution(req: Request, res: Response): Promise<void> {
     try {
@@ -120,7 +115,6 @@ export class EABridgeController {
         return;
       }
 
-      // Verify token
       const verification = await eaBridgeService.verifyToken(token);
       if (!verification.valid) {
         res.status(401).json({
@@ -164,8 +158,7 @@ export class EABridgeController {
   }
 
   /**
-   * EA heartbeat/ping (called by EA every 30 seconds)
-   * POST /api/v1/ea/ping
+   * ✅ FIXED: EA heartbeat/ping with better logging
    */
   async ping(req: Request, res: Response): Promise<void> {
     try {
@@ -179,7 +172,6 @@ export class EABridgeController {
         return;
       }
 
-      // Verify token
       const verification = await eaBridgeService.verifyToken(token);
       if (!verification.valid || !verification.userId || !verification.tokenId) {
         res.status(401).json({
@@ -208,6 +200,8 @@ export class EABridgeController {
         systemInfo
       );
 
+      console.log(`✅ EA Ping received from token ${verification.tokenId.substring(0, 8)}...`);
+
       res.status(200).json({
         success: true,
         message: 'Ping received',
@@ -224,7 +218,6 @@ export class EABridgeController {
 
   /**
    * Get EA connection status (for user dashboard)
-   * GET /api/v1/ea/status
    */
   async getStatus(req: Request, res: Response): Promise<void> {
     try {
@@ -252,8 +245,7 @@ export class EABridgeController {
   }
 
   /**
-   * Get all user EA tokens
-   * GET /api/v1/ea/tokens
+   * ✅ FIXED: Get all user EA tokens with connection status
    */
   async getTokens(req: Request, res: Response): Promise<void> {
     try {
@@ -265,19 +257,29 @@ export class EABridgeController {
         return;
       }
 
-      const tokens = await eaBridgeService.getUserTokens(req.userId);
+      const tokens = await eaBridgeService.getUserTokens(req.userId, false); // Only active
+
+      // ✅ Add connection status to each token
+      const tokensWithStatus = await Promise.all(
+        tokens.map(async (t) => {
+          const isConnected = await eaBridgeService.getTokenConnectionStatus(t.id);
+          
+          return {
+            id: t.id,
+            deviceName: t.deviceName,
+            platform: t.platform,
+            status: t.status,
+            lastUsedAt: t.lastUsedAt,
+            createdAt: t.createdAt,
+            requestCount: t.requestCount,
+            isConnected, // ✅ NEW: Connection status
+          };
+        })
+      );
 
       res.status(200).json({
         success: true,
-        data: tokens.map(t => ({
-          id: t.id,
-          deviceName: t.deviceName,
-          platform: t.platform,
-          status: t.status,
-          lastUsedAt: t.lastUsedAt,
-          createdAt: t.createdAt,
-          requestCount: t.requestCount,
-        })),
+        data: tokensWithStatus,
       });
     } catch (error: any) {
       console.error('Get EA tokens error:', error);
@@ -289,8 +291,7 @@ export class EABridgeController {
   }
 
   /**
-   * Revoke EA token
-   * DELETE /api/v1/ea/tokens/:id
+   * ✅ UPDATED: Revoke EA token (doesn't delete)
    */
   async revokeToken(req: Request, res: Response): Promise<void> {
     try {
@@ -315,6 +316,86 @@ export class EABridgeController {
       res.status(400).json({
         success: false,
         message: error.message || 'Failed to revoke EA token',
+      });
+    }
+  }
+
+  /**
+   * ✅ NEW: Reactivate revoked token
+   */
+  async reactivateToken(req: Request, res: Response): Promise<void> {
+    try {
+      if (!req.userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
+        return;
+      }
+
+      const { id } = req.params;
+
+      await eaBridgeService.reactivateToken(req.userId, id);
+
+      res.status(200).json({
+        success: true,
+        message: 'EA token reactivated successfully',
+      });
+    } catch (error: any) {
+      console.error('Reactivate EA token error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to reactivate EA token',
+      });
+    }
+  }
+
+  /**
+   * ✅ NEW: Permanently delete token
+   */
+  async deleteToken(req: Request, res: Response): Promise<void> {
+    try {
+      if (!req.userId) {
+        res.status(401).json({
+          success: false,
+          message: 'Unauthorized',
+        });
+        return;
+      }
+
+      const { id } = req.params;
+
+      await eaBridgeService.deleteToken(req.userId, id);
+
+      res.status(200).json({
+        success: true,
+        message: 'EA token deleted permanently',
+      });
+    } catch (error: any) {
+      console.error('Delete EA token error:', error);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to delete EA token',
+      });
+    }
+  }
+
+  /**
+   * ✅ NEW: Get connected EAs count (for admin dashboard)
+   */
+  async getConnectedCount(req: Request, res: Response): Promise<void> {
+    try {
+      const count = await eaBridgeService.getConnectedEAsCount();
+
+      res.status(200).json({
+        success: true,
+        data: { count },
+      });
+    } catch (error: any) {
+      console.error('Get connected EAs count error:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message || 'Failed to get connected EAs count',
       });
     }
   }

@@ -1,6 +1,6 @@
-// FILE: src/services/ea-bridge.service.ts (FIXED)
+// FILE: src/services/ea-bridge.service.ts (COMPLETE FIX)
 // =============================================
-// EA Bridge Service - COMPLETE IMPLEMENTATION
+// EA Bridge Service - WITH CONNECTION TRACKING
 // =============================================
 
 import AppDataSource from "../config/database.config";
@@ -61,21 +61,7 @@ export class EABridgeService {
       throw new Error("User not found");
     }
 
-    // Revoke existing active tokens for this device
-    const existingTokens = await this.eaTokenRepo.find({
-      where: {
-        user_id: userId,
-        deviceName,
-        status: EATokenStatus.ACTIVE,
-      },
-    });
-
-    for (const token of existingTokens) {
-      token.revoke();
-      await this.eaTokenRepo.save(token);
-    }
-
-    // Generate new token
+    // ✅ DON'T revoke existing tokens - let user manage them
     const tokenString = generateRandomToken(64);
 
     const eaToken = this.eaTokenRepo.create({
@@ -122,12 +108,7 @@ export class EABridgeService {
     };
   }
 
-  /**
-   * ✅ FIXED: Get pending trade instructions for EA
-   * Returns ALL pending positions across all trades
-   */
   async getInstructions(userId: string): Promise<TradeInstruction[]> {
-    // Get all PENDING or OPEN trades for this user
     const trades = await this.tradeRepo.find({
       where: {
         user_id: userId,
@@ -140,7 +121,6 @@ export class EABridgeService {
     const instructions: TradeInstruction[] = [];
 
     for (const trade of trades) {
-      // Get PENDING positions only
       const pendingPositions = trade.positions.filter(
         (p) => p.status === PositionStatus.PENDING
       );
@@ -171,9 +151,6 @@ export class EABridgeService {
     return instructions;
   }
 
-  /**
-   * ✅ FIXED: Report execution result from EA
-   */
   async reportExecution(report: EAExecutionReport): Promise<void> {
     const position = await this.positionRepo.findOne({
       where: { id: report.positionId },
@@ -187,7 +164,6 @@ export class EABridgeService {
     const trade = position.trade;
 
     if (report.success) {
-      // ✅ Update position with MT ticket
       position.mtOrderTicket = report.mtOrderTicket || null;
       position.status = PositionStatus.OPEN;
       position.openedAt = report.executionTime || new Date();
@@ -198,10 +174,8 @@ export class EABridgeService {
 
       await this.positionRepo.save(position);
 
-      // ✅ Update trade
       trade.positionsFilled += 1;
 
-      // If all positions filled, mark trade as OPEN
       if (trade.positionsFilled >= trade.totalPositions) {
         trade.status = TradeStatus.OPEN;
         trade.openedAt = new Date();
@@ -213,7 +187,6 @@ export class EABridgeService {
         `✅ EA executed position ${position.positionNumber} for trade ${trade.id}`
       );
 
-      // ✅ Emit WebSocket event
       const wsServer = getWebSocketServer();
       if (wsServer) {
         wsServer.emitPositionUpdate(trade.user_id, {
@@ -225,7 +198,6 @@ export class EABridgeService {
           openedAt: position.openedAt,
         });
 
-        // If trade just became OPEN, emit trade opened event
         if (
           trade.status === TradeStatus.OPEN &&
           trade.positionsFilled === trade.totalPositions
@@ -243,10 +215,12 @@ export class EABridgeService {
       console.error(
         `❌ EA failed to execute position ${position.id}: ${report.error}`
       );
-      // Keep as PENDING for retry
     }
   }
 
+  /**
+   * ✅ FIXED: Record heartbeat and update connection status
+   */
   async recordHeartbeat(
     userId: string,
     tokenId: string,
@@ -288,7 +262,17 @@ export class EABridgeService {
 
     await this.heartbeatRepo.save(heartbeat);
 
-    // Emit WebSocket event
+    // ✅ UPDATE TOKEN STATUS TO SHOW IT'S CONNECTED
+    const token = await this.eaTokenRepo.findOne({
+      where: { id: tokenId },
+    });
+
+    if (token) {
+      token.lastUsedAt = new Date();
+      await this.eaTokenRepo.save(token);
+    }
+
+    // ✅ Emit WebSocket event for real-time UI update
     const wsServer = getWebSocketServer();
     if (wsServer && wsServer.isUserConnected(userId)) {
       wsServer.emitToUser(userId, "ea:status", {
@@ -299,8 +283,13 @@ export class EABridgeService {
         lastPing: new Date(),
       });
     }
+
+    console.log(`✅ EA Heartbeat recorded for user ${userId}`);
   }
 
+  /**
+   * ✅ FIXED: Get connection status with online check
+   */
   async getConnectionStatus(userId: string): Promise<{
     connected: boolean;
     lastPing: Date | null;
@@ -319,20 +308,28 @@ export class EABridgeService {
       };
     }
 
+    // ✅ Check if online (last ping within 2 minutes)
+    const isOnline = heartbeat.isOnline();
+
     return {
-      connected: heartbeat.isOnline(),
+      connected: isOnline,
       lastPing: heartbeat.lastPingAt,
-      accountInfo: {
-        accountNumber: heartbeat.accountNumber,
-        broker: heartbeat.broker,
-        balance: heartbeat.balance,
-        equity: heartbeat.equity,
-        freeMargin: heartbeat.freeMargin,
-        openPositions: heartbeat.openPositions,
-      },
+      accountInfo: isOnline
+        ? {
+            accountNumber: heartbeat.accountNumber,
+            broker: heartbeat.broker,
+            balance: heartbeat.balance,
+            equity: heartbeat.equity,
+            freeMargin: heartbeat.freeMargin,
+            openPositions: heartbeat.openPositions,
+          }
+        : null,
     };
   }
 
+  /**
+   * ✅ NEW: Revoke token (mark as revoked, not deleted)
+   */
   async revokeToken(userId: string, tokenId: string): Promise<void> {
     const token = await this.eaTokenRepo.findOne({
       where: { id: tokenId, user_id: userId },
@@ -348,10 +345,99 @@ export class EABridgeService {
     console.log(`✅ EA Token revoked: ${tokenId}`);
   }
 
-  async getUserTokens(userId: string): Promise<EAToken[]> {
+  /**
+   * ✅ NEW: Reactivate token
+   */
+  async reactivateToken(userId: string, tokenId: string): Promise<void> {
+    const token = await this.eaTokenRepo.findOne({
+      where: { id: tokenId, user_id: userId },
+    });
+
+    if (!token) {
+      throw new Error("Token not found");
+    }
+
+    if (token.status !== EATokenStatus.REVOKED) {
+      throw new Error("Only revoked tokens can be reactivated");
+    }
+
+    token.status = EATokenStatus.ACTIVE;
+    await this.eaTokenRepo.save(token);
+
+    console.log(`✅ EA Token reactivated: ${tokenId}`);
+  }
+
+  /**
+   * ✅ NEW: Permanently delete token
+   */
+  async deleteToken(userId: string, tokenId: string): Promise<void> {
+    const token = await this.eaTokenRepo.findOne({
+      where: { id: tokenId, user_id: userId },
+    });
+
+    if (!token) {
+      throw new Error("Token not found");
+    }
+
+    // Delete associated heartbeat
+    await this.heartbeatRepo.delete({ ea_token_id: tokenId });
+
+    // Delete token
+    await this.eaTokenRepo.delete({ id: tokenId });
+
+    console.log(`✅ EA Token deleted permanently: ${tokenId}`);
+  }
+
+  /**
+   * ✅ FIXED: Get only ACTIVE tokens by default
+   */
+  async getUserTokens(
+    userId: string,
+    includeRevoked: boolean = false
+  ): Promise<EAToken[]> {
+    const whereClause: any = { user_id: userId };
+
+    if (!includeRevoked) {
+      whereClause.status = EATokenStatus.ACTIVE;
+    }
+
     return await this.eaTokenRepo.find({
-      where: { user_id: userId },
+      where: whereClause,
       order: { createdAt: "DESC" },
     });
+  }
+
+  /**
+   * ✅ NEW: Get connection status for a specific token
+   */
+  async getTokenConnectionStatus(tokenId: string): Promise<boolean> {
+    const heartbeat = await this.heartbeatRepo.findOne({
+      where: { ea_token_id: tokenId },
+      order: { lastPingAt: "DESC" },
+    });
+
+    if (!heartbeat) {
+      return false;
+    }
+
+    return heartbeat.isOnline();
+  }
+
+  /**
+   * ✅ NEW: Get all connected EAs count (for admin dashboard)
+   */
+  async getConnectedEAsCount(): Promise<number> {
+    const twoMinutesAgo = new Date();
+    twoMinutesAgo.setMinutes(twoMinutesAgo.getMinutes() - 2);
+
+    const count = await this.heartbeatRepo
+      .createQueryBuilder("heartbeat")
+      .where("heartbeat.lastPingAt > :twoMinutesAgo", { twoMinutesAgo })
+      .andWhere("heartbeat.status = :status", {
+        status: EAConnectionStatus.ONLINE,
+      })
+      .getCount();
+
+    return count;
   }
 }
