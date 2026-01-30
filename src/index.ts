@@ -124,6 +124,7 @@ app.get("/health", (_req: Request, res: Response) => {
 import authRoutes from "./routes/auth.routes";
 import channelRoutes from "./routes/channel.routes";
 import tradeRoutes from "./routes/trade.routes";
+import signalRoutes from "./routes/signal.routes";
 import channelRequestRoutes from "./routes/channel-request.routes";
 import eaBridgeRoutes from "./routes/ea-bridge.routes"; // ✅ ADD THIS\
 
@@ -159,6 +160,7 @@ app.use("/api/v1/channels", channelRoutes);
 app.use("/api/v1/trades", tradeRoutes);
 app.use("/api/v1/channel-requests", channelRequestRoutes);
 app.use("/api/v1/ea", eaBridgeRoutes);
+app.use("/api/v1/signals", signalRoutes);
 
 // Admin routes
 app.use("/api/v1/admin/invitations", adminInvitationRoutes);
